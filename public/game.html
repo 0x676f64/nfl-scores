@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>NFL Scoreboard</title>
+<link rel="stylesheet" href="./splash.css" />
+</head>
+<body class="scorebug">
+
+<div id="loading-state">
+  <div class="loading-spinner"></div>
+  <div class="loading-text">Loading scoreboard…</div>
+</div>
+
+<div id="scorebug-content" style="display:none">
+  <div class="scorebug-header">
+    <div class="scorebug-top">
+      <div class="meta-strip">
+        <div class="venue" id="venue-info"></div>
+        <div class="network" id="network-info"></div>
+        <div class="game-context" id="game-context"></div>
+      </div>
+      <div class="score-row">
+        <div class="team">
+          <span class="team-logo" id="away-logo-holder"></span>
+          <div class="team-info">
+            <span class="team-name" id="away-name"></span>
+            <span class="team-record" id="away-record"></span>
+          </div>
+        </div>
+        <div class="status-block">
+          <span class="status-score" id="away-score">0</span>
+          <div class="status-center">
+            <span class="status-badge" id="status-badge"></span>
+            <span class="status-inning" id="inning-info"></span>
+            <span class="status-count" id="status-count"><span id="poss-text"></span></span>
+          </div>
+          <span class="status-score" id="home-score">0</span>
+        </div>
+        <div class="team">
+          <span class="team-logo" id="home-logo-holder"></span>
+          <div class="team-info">
+            <span class="team-name" id="home-name"></span>
+            <span class="team-record" id="home-record"></span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="linescore"><div id="linescore-container"></div></div>
+  </div>
+
+  <!-- Dynamic first tab: MATCHUP -> LIVE -> WRAP -->
+  <div class="tab-content tab-content-active" id="tab-game">
+    <div class="state-pane" id="pregame-content" style="display:none">
+      <div id="pregame-body"></div>
+    </div>
+    <div class="state-pane" id="live-content" style="display:none">
+      <div class="drive-hdr" id="drive-hdr" style="display:none">
+        <span class="dh-logo" id="dh-logo"></span>
+        <span>
+          <span class="dh-title">CURRENT DRIVE</span><br>
+          <span class="dh-meta" id="dh-meta"></span>
+        </span>
+      </div>
+      <div class="penalty-pill" id="penalty-pill">PENALTY</div>
+      <div class="situation-strip" id="situation" style="display:none">
+        <span class="sit-col"><span class="sit-k">DOWN</span><span class="sit-v" id="sit-dd">—</span></span>
+        <span class="sit-div"></span>
+        <span class="sit-col"><span class="sit-k">BALL ON</span><span class="sit-v" id="sit-spot">—</span></span>
+      </div>
+      <div class="fieldwrap">
+        <div class="fieldscene">
+          <div class="poss-pin" id="poss-pin" style="display:none"></div>
+          <div class="fieldplane" id="fieldplane">
+            <div class="ez left" id="ez-left-zone"><span class="ezlabel" id="ez-left"></span>
+              <span class="gp tl"></span><span class="gp bl"></span></div>
+            <div class="ez right" id="ez-right-zone"><span class="ezlabel" id="ez-right"></span>
+              <span class="gp tr"></span><span class="gp br"></span></div>
+            <div class="fline first" id="first-line" style="display:none"></div>
+            <svg class="drive-svg" id="drive-svg" viewBox="0 0 1200 92" preserveAspectRatio="none"></svg>
+          </div>
+        </div>
+        <div class="yardnums" id="yard-nums"></div>
+      </div>
+      <div class="lastplay" id="last-play" style="display:none"></div>
+    </div>
+    <div class="state-pane" id="final-content" style="display:none">
+      <div id="final-body"></div>
+    </div>
+    <div class="state-pane" id="postponed-content" style="display:none">
+      <div id="postponed-body"></div>
+    </div>
+  </div>
+
+  <!-- STATS -->
+  <div class="tab-content" id="tab-box">
+    <div id="leaders-box"></div>
+    <div class="bs-team-tabs">
+      <button class="bs-team-tab active" data-bs-team="away" type="button">
+        <span class="bs-team-tab-logo" id="bs-away-tab-logo"></span>
+        <span class="bs-team-tab-abbr" id="bs-away-tab-abbr">AWAY</span>
+      </button>
+      <button class="bs-team-tab" data-bs-team="home" type="button">
+        <span class="bs-team-tab-logo" id="bs-home-tab-logo"></span>
+        <span class="bs-team-tab-abbr" id="bs-home-tab-abbr">HOME</span>
+      </button>
+    </div>
+    <div class="bs-panel-wrap">
+      <div class="bs-panel active" id="bs-away-panel"></div>
+      <div class="bs-panel" id="bs-home-panel"></div>
+    </div>
+  </div>
+
+  <!-- PLAYS -->
+  <div class="tab-plays-wrap tab-content" id="tab-plays">
+    <div class="plays-toggle" id="plays-toggle" data-active="scoring">
+      <button class="plays-seg is-active" data-plays="scoring" type="button">Scoring</button>
+      <button class="plays-seg" data-plays="all" type="button">Drives</button>
+    </div>
+    <div id="scoring-plays-list"></div>
+    <div id="all-plays-list" hidden></div>
+    <div id="plays-clips"></div>
+  </div>
+
+  <!-- WIN PROB -->
+  <div class="tab-content" id="tab-winprob"></div>
+
+  <!-- STANDINGS -->
+  <div class="tab-content" id="tab-standings">
+    <div class="stand-nav" id="stand-nav" data-active="AFC">
+      <button class="stand-seg is-active" data-league="AFC" type="button">AFC</button>
+      <button class="stand-seg" data-league="NFC" type="button">NFC</button>
+    </div>
+    <div id="stand-body"></div>
+  </div>
+
+  <nav class="tab-bar">
+    <button class="tab tab-active" data-tab="game" type="button"><span id="dynamic-tab-label">GAME</span></button>
+    <button class="tab" data-tab="box" type="button"><span>STATS</span></button>
+    <button class="tab" data-tab="plays" type="button"><span>PLAYS</span></button>
+    <button class="tab" data-tab="winprob" type="button"><span>WIN PROB</span></button>
+    <button class="tab" data-tab="standings" type="button"><span>STANDINGS</span></button>
+  </nav>
+</div>
+
+<script type="module" src="./game.js"></script>
+</body>
+</html>
