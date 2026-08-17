@@ -501,6 +501,18 @@ function cdnLogo(t: NormTeam): string {
   return `https://a.espncdn.com/i/teamlogos/nfl/500/${encodeURIComponent(t.abbr.toLowerCase())}.png`;
 }
 
+// Dual-mode team colors: [dark-theme, light-theme]. Joe's curated list drops
+// in here; until then both slots fall back to the primary map / payload.
+const TEAM_COLORS_DUAL: Record<string, [string, string]> = {};
+function railColorOf(t: NormTeam, fallback: string): string {
+  const dual = TEAM_COLORS_DUAL[t.id];
+  if (dual) {
+    const light = document.documentElement.getAttribute("data-theme") === "light";
+    return dual[light ? 1 : 0];
+  }
+  return teamColorOf(t, fallback);
+}
+
 function teamColorOf(t: NormTeam, fallback: string): string {
   return t.color || NFL_COLORS[t.id] || fallback;
 }
@@ -1531,38 +1543,105 @@ let statsBoxTeam: "away" | "home" = "away";
 
 // ── PLAYS tab (scoring | drives) + highlights ─────────────────────────────
 
-function buildScoringCards(compact: boolean): string {
-  const g = lastGame;
-  const sp: any[] = lastSummary?.scoringPlays || [];
-  if (!g || !sp.length) return '<div class="plays-empty">No scoring plays yet</div>';
-  return [...sp].reverse().map((p: any) => {
-    const abbr = p?.team?.abbreviation || "";
-    const stype = p?.scoringType?.abbreviation || p?.scoringType?.displayName || p?.type?.abbreviation || "";
-    const per = p?.period?.number ? periodLabel(Number(p.period.number)) : "";
-    const clk = p?.clock?.displayValue || "";
-    return `<div class="play-card"><div class="play-main">` +
-      `<div class="play-header"><span class="play-inning sp-when">${escapeHtml(per)} ${escapeHtml(clk)}</span>` +
-      `<span class="play-event-badge">${escapeHtml(String(stype).toUpperCase() || "SCORE")}</span>` +
-      `<span class="play-event-text">${escapeHtml(abbr)}</span></div>` +
-      `<div class="play-desc">${escapeHtml(String(p?.text || ""))}</div>` +
-      `<div class="sp-scoreline">${escapeHtml(g.away.abbr)} ${Number(p?.awayScore) || 0} — ${escapeHtml(g.home.abbr)} ${Number(p?.homeScore) || 0}</div>` +
-      `</div></div>`;
-  }).join("");
-}
-
-function driveResultClass(result: string): string {
-  if (/TD|FG|SCORE/i.test(result)) return "score";
-  if (/INT|FUMBLE|DOWNS|TURNOVER/i.test(result)) return "turnover";
-  if (/PROGRESS/i.test(result)) return "progress";
-  return "";
-}
-
 const openDrives = new Set<string>();
 let playsAnimate = false;
 
 function driveTeamOf(d: any, g: NormGame): NormTeam | null {
   const id = d?.team?.id != null ? String(d.team.id) : "";
   return id === g.home.id ? g.home : id === g.away.id ? g.away : null;
+}
+
+// ── Play entries (ESPN drive-view anatomy) ────────────────────────────────
+// rail + icon + "23 Yard Pass · 1st & 10 at DET 44" + "13:16 1st — text"
+
+const PLAY_ICONS: Record<string, string> = {
+  pass: '<path d="M3 12c3-5 15-5 18 0-3 5-15 5-18 0z"/><path d="M9 10.5l1.5 3M12 10l0 4M15 10.5l-1.5 3"/>',
+  run: '<path d="M4 17h9M8 12h9M6 7h9"/><path d="M17 9l3 3-3 3"/>',
+  sack: '<path d="M12 3l7 3v5c0 5-3.5 8-7 10-3.5-2-7-5-7-10V6z"/>',
+  kick: '<path d="M6 18c6 0 12-6 12-12"/><path d="M15 3l3 3-3 3M4 20l2-2"/>',
+  int: '<path d="M4 7h10l3 3M4 17h10l3-3"/><path d="M14 4l3 3-3 3M14 20l3-3-3-3"/>',
+  flag: '<path d="M6 21V4"/><path d="M6 4h11l-2.5 3.5L17 11H6"/>',
+  dot: '<circle cx="12" cy="12" r="3"/>',
+};
+
+function playIconKey(t: string): string {
+  const s = t.toLowerCase();
+  if (/interception/.test(s)) return "int";
+  if (/sack/.test(s)) return "sack";
+  if (/punt|kick|field goal|extra point/.test(s)) return "kick";
+  if (/pass|reception|incompletion/.test(s)) return "pass";
+  if (/rush|run/.test(s)) return "run";
+  if (/penalty/.test(s)) return "flag";
+  return "dot";
+}
+function playIcon(t: string): string {
+  return `<svg class="dp-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${PLAY_ICONS[playIconKey(t)]}</svg>`;
+}
+
+const PERIOD_LC = ["", "1st", "2nd", "3rd", "4th"];
+function periodLc(n: number): string {
+  if (n <= 0) return "";
+  return PERIOD_LC[n] || "OT" + (n > 5 ? String(n - 4) : "");
+}
+
+function playTitle(p: any): string {
+  const t = playTypeText(p);
+  const y = Number(p?.statYardage) || 0;
+  const text = String(p?.text || "");
+  if (/kickoff/i.test(t)) {
+    const m = text.match(/from ([A-Z]{2,4} \d{1,2})/);
+    return "Kickoff" + (m ? ` from ${m[1]}` : "");
+  }
+  if (/interception/i.test(t)) return "Interception";
+  if (/punt/i.test(t)) return "Punt";
+  if (/field goal|extra point/i.test(t)) return t;
+  if (/penalty/i.test(t)) return "Penalty";
+  if (/sack/i.test(t)) return `${y} Yard Sack`;
+  if (/incompletion/i.test(t)) return "Incomplete Pass";
+  if (/pass|reception/i.test(t)) return `${y} Yard Pass`;
+  if (/rush|run/i.test(t)) return `${y} Yard Run`;
+  return t || "Play";
+}
+
+function playEntryHtml(p: any, color: string): string {
+  const title = playTitle(p);
+  const dd = String(p?.start?.downDistanceText || "");
+  let text = String(p?.text || "").trim();
+  let boldSuffix = "";
+  const form = text.match(/^\((.*?)\)\s*/);
+  if (form) { boldSuffix = " " + form[1]; text = text.slice(form[0].length); }
+  const clk = `${p?.clock?.displayValue || ""} ${periodLc(Number(p?.period?.number) || 0)}`.trim();
+  return `<div class="dp-entry" style="--rail:${color}">` +
+    `<div class="dp-title">${playIcon(playTypeText(p))}<b>${escapeHtml(title)}</b>` +
+    (dd ? `<span class="dp-dd"> · ${escapeHtml(dd)}</span>` : "") + `</div>` +
+    `<div class="dp-body"><b>${escapeHtml(clk)}${escapeHtml(boldSuffix)}</b>` +
+    `${clk || boldSuffix ? " — " : ""}${escapeHtml(text)}</div></div>`;
+}
+
+function buildScoringCards(_compact: boolean): string {
+  const g = lastGame;
+  const sp: any[] = lastSummary?.scoringPlays || [];
+  if (!g || !sp.length) return '<div class="plays-empty">No scoring plays yet</div>';
+  return [...sp].reverse().map((p: any, i: number) => {
+    const teamId = p?.team?.id != null ? String(p.team.id) : "";
+    const team = teamId === g.home.id ? g.home : g.away;
+    const color = railColorOf(team, teamId === g.home.id ? "#013369" : "#d50a0a");
+    const scoreline = `${escapeHtml(g.away.abbr)} ${Number(p?.awayScore) || 0} — ${escapeHtml(g.home.abbr)} ${Number(p?.homeScore) || 0}`;
+    return `<div class="dp-card${playsAnimate ? " rise-in" : ""}" style="--i:${i}">` +
+      playEntryHtml(p, color) +
+      `<div class="dp-score">${scoreline}</div></div>`;
+  }).join("");
+}
+
+function driveScores(d: any): { away: number; home: number } | null {
+  const plays: any[] = d?.plays || [];
+  for (let i = plays.length - 1; i >= 0; i--) {
+    const p = plays[i];
+    if (p?.awayScore != null || p?.homeScore != null) {
+      return { away: Number(p.awayScore) || 0, home: Number(p.homeScore) || 0 };
+    }
+  }
+  return null;
 }
 
 function buildDriveCards(g: NormGame): string {
@@ -1576,31 +1655,29 @@ function buildDriveCards(g: NormGame): string {
   return list.map((w, idx) => {
     const d = w.d;
     const team = driveTeamOf(d, g);
-    const who = team ? logoImg(team, "drive-logo") :
-      `<span class="drive-who">${escapeHtml(d?.team?.abbreviation || "")}</span>`;
-    const result = String(d?.displayResult || d?.result || (w.current ? "IN PROGRESS" : ""));
-    const cls = driveResultClass(result);
-    const meta = [
-      d?.offensivePlays != null ? `${d.offensivePlays} plays` : "",
-      d?.yards != null ? `${d.yards} yds` : "",
-      d?.timeElapsed?.displayValue || "",
-    ].filter(Boolean).join(" · ");
-    const plays: any[] = d?.plays || [];
+    const color = team ? railColorOf(team, team.id === g.home.id ? "#013369" : "#d50a0a") : "var(--text-muted)";
+    const result = String(d?.displayResult || d?.result || (w.current ? "In Progress" : ""));
+    const stat = (label: string, val: string): string =>
+      `<span class="dv-stat"><span class="dv-stat-k">${label}</span><span class="dv-stat-v">${escapeHtml(val)}</span></span>`;
+    const sc = driveScores(d);
     const open = openDrives.has(w.key);
-    let playsHtml = "";
-    if (plays.length) {
-      playsHtml = '<div class="drive-body"><div class="drive-plays">' + plays.map((p: any) => {
-        const dd = p?.start?.downDistanceText || p?.start?.shortDownDistanceText || "";
-        return `<div class="p">${dd ? `<div class="pdd">${escapeHtml(dd)}</div>` : ""}${escapeHtml(String(p?.text || ""))}</div>`;
-      }).join("") + "</div></div>";
-    }
+    const plays: any[] = d?.plays || [];
+    const body = plays.length
+      ? `<div class="drive-body"><div class="dp-list">${plays.map((p) => playEntryHtml(p, color)).join("")}</div></div>`
+      : "";
     return `<button type="button" class="drive-card${w.current ? " current" : ""}${open ? " open" : ""}` +
       `${playsAnimate ? " rise-in" : ""}" data-drive="${w.key}" style="--i:${idx}">` +
-      `<div class="drive-head">${who}` +
-      `<span class="drive-meta">${escapeHtml(meta)}</span>` +
-      `<span class="drive-result ${cls}${w.current ? " progress" : ""}">${escapeHtml(result)}</span>` +
+      `<div class="drive-head">` +
+      (team ? logoImg(team, "drive-logo") : "") +
+      `<span class="dv-result">${escapeHtml(result)}</span>` +
+      stat("PLAYS", String(d?.offensivePlays ?? plays.filter((p: any) => !isAdminPlay(p)).length)) +
+      stat("YDS", String(d?.yards ?? "—")) +
+      stat("TTL TIME", String(d?.timeElapsed?.displayValue || "—")) +
+      (sc ? `<span class="dv-score">` +
+        `<span class="dv-score-t">${logoImg(g.away, "dv-score-logo")}<b>${sc.away}</b></span>` +
+        `<span class="dv-score-t">${logoImg(g.home, "dv-score-logo")}<b>${sc.home}</b></span></span>` : "") +
       `<svg class="drive-chev" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 9l6 6 6-6"/></svg>` +
-      `</div>${playsHtml}</button>`;
+      `</div>${body}</button>`;
   }).join("");
 }
 

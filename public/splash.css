@@ -2741,3 +2741,26 @@ body.is-pregame .linescore {
 .drive-body > .drive-plays { overflow: hidden; min-height: 0; margin-top: 0; border-top: none; padding-top: 0; }
 .drive-card.open .drive-body > .drive-plays { margin-top: 8px; border-top: 1px dashed var(--border-subtle); padding-top: 8px; }
 @media (prefers-reduced-motion: reduce) { .drive-body, .drive-chev { transition: none; } }
+
+/* ── ESPN-style play entries + drive headers ────────────────────────── */
+.dp-entry { border-left: 3px solid var(--rail, var(--border-medium)); padding: 2px 0 4px 10px; margin: 7px 0; }
+.dp-title { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--text-primary); }
+.dp-title b { font-weight: 800; }
+.dp-icon { width: 13px; height: 13px; flex: 0 0 auto; color: var(--text-muted); }
+.dp-dd { color: var(--text-muted); font-size: 11.5px; font-weight: 400; }
+.dp-body { font-size: 12px; color: var(--text-secondary); line-height: 1.5; margin-top: 2px; }
+.dp-body b { color: var(--text-primary); font-weight: 700; }
+.dp-card { background: var(--bg-elev-1); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 6px 12px 8px; margin: 0 var(--space-md) var(--space-sm); }
+.dp-score { font-family: var(--font-mono); font-size: 10.5px; font-weight: 700; color: var(--text-muted); padding-left: 13px; }
+.dp-list { padding-top: 2px; }
+
+.drive-head { min-width: 0; }
+.dv-result { font-family: var(--font-display); font-weight: 700; font-size: 14px; letter-spacing: .02em; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dv-stat { display: none; flex-direction: column; align-items: center; gap: 1px; }
+.dv-stat-k { font-family: var(--font-mono); font-size: 8px; letter-spacing: .08em; color: var(--text-muted); }
+.dv-stat-v { font-family: var(--font-mono); font-size: 12px; font-weight: 700; color: var(--text-primary); }
+@media (min-width: 380px) { .dv-stat { display: flex; } .dv-result { flex: 1; } }
+.dv-score { display: flex; gap: 10px; margin-left: auto; padding-left: 8px; border-left: 1px solid var(--border-subtle); }
+.dv-stat + .dv-stat, .dv-stat + .dv-score { margin-left: 6px; }
+.dv-score-t { display: flex; flex-direction: column; align-items: center; gap: 1px; font-family: var(--font-mono); font-size: 11px; }
+.dv-score-logo { width: 15px; height: 15px; object-fit: contain; }
