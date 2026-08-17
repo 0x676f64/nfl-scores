@@ -2271,7 +2271,7 @@ body.is-inline #inline-pager.pager-active { display: flex; }
   -webkit-tap-highlight-color: transparent;
   white-space: nowrap;
 }
-.plays-seg.is-active { color: rgba(191, 13, 61, 0.55) }
+.plays-seg.is-active { color: rgba(138, 10, 44, 0.856) }
 
 /* Newly-shown list fades + slides up on each toggle */
 .plays-list-enter { animation: playsListEnter 0.3s ease; }
