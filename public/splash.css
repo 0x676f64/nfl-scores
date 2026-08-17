@@ -2264,14 +2264,14 @@ body.is-inline #inline-pager.pager-active { display: flex; }
   cursor: pointer;
   font-family: var(--font-sans);
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 700;
   letter-spacing: 0.03em;
   color: var(--text-muted);
   transition: color 0.25s ease;
   -webkit-tap-highlight-color: transparent;
   white-space: nowrap;
 }
-.plays-seg.is-active { color: #fff; }
+.plays-seg.is-active { color: rgba(191, 13, 61, 0.55) }
 
 /* Newly-shown list fades + slides up on each toggle */
 .plays-list-enter { animation: playsListEnter 0.3s ease; }
