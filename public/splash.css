@@ -128,33 +128,40 @@ body.scorebug {
   flex-direction: column;
 }
 
-/* Diamond watermark on its own layer (behind content) so it can be recolored
-   per theme without touching the content above it. */
+/* Shield watermark on its own layer (behind content) so it can be recolored
+   per theme without touching the content above it.
+   Sizing math (source is 82x112, aspect 0.73 — tall): at 300px wide it runs
+   410px tall; top-cropped by 100px so the crest peeks from under the header,
+   and the mask dissolves the rest well before the artwork's real bottom edge.
+   Dials: background-size = overall presence (260-340px sane range);
+   top offset = how much crest shows; opacity below = net faintness
+   (artwork carries a baked 0.2, so layer 0.35 ≈ 7% on screen). */
 #scorebug-content::before {
   content: "";
   position: absolute;
   top: 0;
   left: 0;
   right: 0;
-  height: 500px;                 /* bound the layer so its fade has a fixed extent (was inset: 0) */
+  height: 500px;                 /* bound the layer so its fade has a fixed extent */
   z-index: -1;
   pointer-events: none;
-  background-image: url('/diamond.png');
+  background-image: url('/shield.svg');
   background-repeat: no-repeat;
-  background-position: center top -200px;
-  background-size: 600px auto;
-  /* Dissolve the watermark toward its bottom so the image's hard edge never
-     reads as a horizontal line while scrolling. That edge exists in both themes
-     but is invisible on navy; the light-mode invert() is what exposed it. Lower
-     the 80% if a faint edge remains; raise it if the diamond looks cropped. */
-  -webkit-mask-image: linear-gradient(to bottom, #000 30%, transparent 80%);
-          mask-image: linear-gradient(to bottom, #000 30%, transparent 80%);
+  background-position: center top -100px;
+  background-size: 300px auto;
+  opacity: 0.35;
+  /* Shield paths are BLACK — invisible on the navy card, so dark theme
+     inverts to white. (Opposite arrangement from the old light-colored
+     diamond.) */
+  filter: invert(1);
+  -webkit-mask-image: linear-gradient(to bottom, #000 25%, transparent 72%);
+          mask-image: linear-gradient(to bottom, #000 25%, transparent 72%);
 }
 
-/* The watermark is light-colored, so on the white light-mode card it would
-   vanish — invert it to a faint gray. Add an opacity here if it reads too strong. */
+/* Light theme: black artwork already reads as a soft gray on the ice card —
+   no invert needed. */
 [data-theme="light"] #scorebug-content::before {
-  filter: invert(1);
+  filter: none;
 }
 
 /* Pinned chrome — header sticks to the top, tab-bar to the bottom */
@@ -2483,74 +2490,62 @@ body.on-standings-tab .weather-strip { max-height: 0; opacity: 0; padding-top: 0
 }
 .drive-hdr .dh-meta { font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); }
 
-/* field — ESPN minimalist: white/grey bands, colored end zones, subtle tilt */
-.fieldwrap { padding: 26px 12px 2px; }
-.fieldscene { position: relative; perspective: 620px; perspective-origin: 50% -40%; }
-.fieldplane {
-  position: relative; height: 116px;
-  transform: rotateX(46deg); transform-style: preserve-3d;
-  background: repeating-linear-gradient(90deg,
-    var(--field-a) 0 calc(200%/24),
-    var(--field-b) calc(200%/24) calc(400%/24));
-  border-radius: 2px;
-  outline: 1px solid var(--field-edge);
+/* field — flat SVG, ESPN coordinate system (perspective baked in).
+   Full-bleed: the field escapes the pane's side padding for maximum width. */
+.fieldwrap { padding: 12px 0 0; margin: 0 calc(-1 * var(--space-md) + 4px); }
+.field-svg { width: 100%; height: auto; display: block; overflow: visible; }
+.fv-sideoverlay { fill: rgba(10, 24, 40, 0.26); }
+.fv-band { fill: #f7f8f9; }
+.fv-band--dark { fill: #ececef; }
+.fv-tenline { stroke: rgba(10, 24, 40, 0.14); stroke-width: 1; }
+.fv-edge { stroke: rgba(10, 24, 40, 0.22); stroke-width: 0.75; }
+.fv-ezname {
+  fill: #fff; font-family: var(--font-display); font-weight: 700;
+  letter-spacing: .02em; paint-order: stroke;
+  stroke: rgba(0,0,0,0.22); stroke-width: 0.5px;
+  text-transform: uppercase;
 }
-/* yard lines: 10s only (minimalist — no 5s) */
-.yline { position: absolute; top: 0; bottom: 0; width: 1px; background: rgba(10, 24, 40, 0.10); }
-.yline.mid { background: rgba(10, 24, 40, 0.22); width: 1.5px; }
-/* colored end zones — background + label set from team data in JS */
-.ez {
-  position: absolute; top: 0; bottom: 0; width: calc(100%/12);
-  display: flex; align-items: center; justify-content: center;
-  overflow: hidden;
+.fv-first { stroke: var(--first-gold); stroke-width: 2; }
+.fv-driveline { stroke: var(--play-ink); stroke-width: 1.6; stroke-linecap: round; opacity: 0.4; fill: none; }
+.fv-arrow { fill: var(--play-ink); }
+.fv-x { stroke: #d50a0a; stroke-width: 2.6; stroke-linecap: round; fill: none; }
+.fv-pin-bubble { fill: #fff; stroke: #14181d; stroke-width: 1.6; }
+.fv-pin-tail { fill: #14181d; }
+.fv-pin-abbr { fill: #5b6474; font-family: var(--font-mono); font-size: 8px; font-weight: 700; }
+.fv-chipbg { fill: #14181d; }
+.fv-chipbg.pen { fill: var(--penalty-yellow); }
+.fv-chiptext { fill: #fff; font-family: var(--font-mono); font-size: 9px; font-weight: 700; letter-spacing: .04em; }
+.fv-chiptext.pen { fill: #14181d; }
+@keyframes fv-pop {
+  0% { opacity: 0; transform: translateY(4px); }
+  100% { opacity: 1; transform: translateY(0); }
 }
-.ez.left { left: 0; border-right: 2px solid rgba(255,255,255,0.9); border-radius: 2px 0 0 2px; }
-.ez.right { right: 0; border-left: 2px solid rgba(255,255,255,0.9); border-radius: 0 2px 2px 0; }
-.ez .ezlabel {
-  font-family: var(--font-display); font-weight: 800; font-size: 12px;
-  letter-spacing: .1em; color: #fff; white-space: nowrap;
-  transform: rotate(-90deg);
-  text-shadow: 0 1px 2px rgba(0,0,0,0.25);
+#fv-pin.anim-in, #fv-chip.anim-in { opacity: 0; animation: fv-pop .4s var(--ease-out) both; }
+@media (prefers-reduced-motion: reduce) {
+  #fv-pin.anim-in, #fv-chip.anim-in { animation: none; opacity: 1; }
 }
-.ez.right .ezlabel { transform: rotate(90deg); }
-/* goal posts — minimal ESPN-style corner forks */
-.gp {
-  position: absolute; width: 4px; height: 15px; border-radius: 2px;
-  background: var(--post-gold);
-}
-.gp.tl { left: -3px; top: -7px; transform: rotate(-14deg); }
-.gp.bl { left: -3px; bottom: -7px; transform: rotate(14deg); }
-.gp.tr { right: -3px; top: -7px; transform: rotate(14deg); }
-.gp.br { right: -3px; bottom: -7px; transform: rotate(-14deg); }
-/* first-down line (ESPN yellow vertical) */
-.fline { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; transition: left .5s var(--ease-out); }
-.fline.first { background: var(--first-gold); }
-/* drive path SVG lies flat on the plane */
-.drive-svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
-/* possession pin — upright bubble above the plane, outside the 3D transform */
-.poss-pin {
-  position: absolute; top: -18px; width: 34px; height: 34px; margin-left: -17px;
-  border-radius: 50% 50% 50% 0;
-  transform: rotate(-45deg);
-  background: #fff; border: 2px solid #14181d;
-  box-shadow: 0 3px 8px rgba(0,0,0,0.25);
-  display: flex; align-items: center; justify-content: center;
-  transition: left .5s var(--ease-out);
-  z-index: 5;
-}
-.poss-pin img, .poss-pin .logo-badge {
-  width: 22px; height: 22px; transform: rotate(45deg); object-fit: contain;
-  font-size: 8px;
-}
+
 /* flat yard-number strip below the plane; mobile shows EZ · 20 · 50 · 20 · EZ */
+/* yard markers — ESPN FieldView__markers: fixed 11px labels positioned at
+   the true yard-line x, padded off the field edge */
 .yardnums {
-  display: grid; grid-template-columns: repeat(12, 1fr);
-  margin-top: 12px;
-  font-family: var(--font-mono); font-size: 9.5px;
-  color: var(--text-muted); text-align: center;
+  position: relative;
+  height: 12px;
+  margin-top: 4px;
+  padding-bottom: 12px;
+  font-size: 11px;
+  line-height: 12px;
+  letter-spacing: normal;
+  color: var(--text-muted);
+  font-family: var(--font-sans);
+}
+.yardnums .fv-mark {
+  position: absolute;
+  transform: translateX(-50%);
+  white-space: nowrap;
 }
 @media (max-width: 480px) {
-  .yardnums span.minor { visibility: hidden; }
+  .yardnums .fv-mark.minor { display: none; }
 }
 .lastplay { margin: 12px var(--space-md) 0; padding: 10px 12px; background: var(--bg-elev-1);
   border: 1px solid var(--border-subtle);
@@ -2622,3 +2617,127 @@ body.is-pregame .linescore {
 @media (prefers-reduced-motion: reduce) {
   .linescore { transition: none; }
 }
+
+/* ── field viz v2: chip, animations ─────────────────────────────────── */
+.yard-chip {
+  position: absolute; top: calc(100% + 8px); margin-left: -24px;
+  min-width: 48px; text-align: center;
+  padding: 3px 8px; border-radius: 5px;
+  background: #14181d; color: #fff;
+  font-family: var(--font-mono); font-size: 10px; font-weight: 700;
+  letter-spacing: .04em;
+  transition: left .45s var(--ease-out);
+  z-index: 5;
+}
+.yard-chip.pen { background: var(--penalty-yellow); color: #14181d; }
+
+
+.poss-pin { transition: left .45s var(--ease-out); }
+@keyframes pin-drop {
+  0%   { transform: rotate(-45deg) translate(6px, -6px) scale(0.85); }
+  55%  { transform: rotate(-45deg) translate(-2px, 2px) scale(1.06); }
+  100% { transform: rotate(-45deg) translate(0, 0) scale(1); }
+}
+.poss-pin.anim-in { animation: pin-drop .5s var(--ease-out); }
+@keyframes chip-pop {
+  0% { opacity: 0; transform: translateY(4px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+.yard-chip.anim-in { animation: chip-pop .4s var(--ease-out) both; }
+@keyframes path-in {
+  0% { opacity: 0; transform: translateY(-3px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+.drive-svg .lp-path.anim-in, .drive-svg .lp-arrow.anim-in { animation: path-in .45s var(--ease-out) both; }
+@media (prefers-reduced-motion: reduce) {
+  .poss-pin.anim-in, .yard-chip.anim-in,
+  .drive-svg .lp-path.anim-in, .drive-svg .lp-arrow.anim-in { animation: none; }
+  .poss-pin, .yard-chip { transition: none; }
+}
+
+/* ── play banner: penalty (yellow) / scoring (bold) share one slot ────── */
+.play-banner {
+  display: none; width: max-content; max-width: 90%;
+  margin: 0 auto var(--space-sm);
+  align-items: center; gap: 7px;
+  padding: 4px 14px; border-radius: 999px;
+  font-family: var(--font-display); font-weight: 700; font-size: 13px;
+  letter-spacing: .08em;
+}
+.play-banner.on { display: inline-flex; position: relative; left: 50%; transform: translateX(-50%); animation: banner-in .4s var(--ease-out) both; }
+.play-banner.pen {
+  background: rgba(230, 184, 0, 0.14); border: 1px solid rgba(230, 184, 0, 0.5);
+  color: var(--penalty-yellow); font-family: var(--font-mono); font-size: 11px;
+}
+.play-banner.score {
+  background: var(--bg-elev-2); border: 1px solid var(--border-medium);
+  color: var(--text-primary); font-size: 14px; letter-spacing: .12em;
+}
+.play-banner .pb-logo, .play-banner .pb-logo-img { width: 18px; height: 18px; flex: 0 0 auto; }
+.play-banner .pb-logo img { width: 100%; height: 100%; object-fit: contain; }
+@keyframes banner-in {
+  0% { opacity: 0; transform: translateX(-50%) translateY(-6px); }
+  100% { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+.replay-btn {
+  flex: 0 0 auto; width: 26px; height: 26px;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--bg-elev-2); color: var(--text-secondary);
+  border: 1px solid var(--border-medium); border-radius: 6px;
+  cursor: pointer; -webkit-tap-highlight-color: transparent;
+}
+.replay-btn:active { transform: scale(0.92); }
+@media (prefers-reduced-motion: reduce) { .play-banner.on { animation: none; } }
+
+/* ── STATS overhaul: team comparison + leader cards ─────────────────── */
+.wrap-meta {
+  text-align: center; font-family: var(--font-mono); font-size: 11px;
+  color: var(--text-muted); padding: 10px 0 6px; letter-spacing: .04em;
+}
+.ts-wrap { padding: 0 var(--space-md); }
+.ts-head { display: flex; align-items: center; justify-content: space-between; padding: 10px 2px 8px; }
+.ts-head-label { font-family: var(--font-display); font-weight: 600; font-size: 13px; letter-spacing: .12em; color: var(--text-muted); }
+.ts-logo { width: 30px; height: 30px; object-fit: contain; }
+.ts-row { padding: 7px 0 9px; }
+.ts-row + .ts-row { border-top: 1px solid var(--border-subtle); }
+.ts-vals { display: grid; grid-template-columns: 1fr auto 1fr; align-items: baseline; gap: 8px; }
+.ts-val { font-family: var(--font-mono); font-size: 13px; font-variant-numeric: tabular-nums; }
+.ts-val:last-child { text-align: right; }
+.ts-val.win { font-weight: 800; }
+.ts-label { font-size: 11px; color: var(--text-muted); text-align: center; }
+.ts-bar { display: flex; height: 4px; border-radius: 2px; overflow: hidden; margin-top: 5px; background: var(--bg-elev-1); }
+.ts-bar span { height: 100%; transition: width .6s var(--ease-out); }
+.ts-bar span + span { margin-left: 2px; }
+
+.ld-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 6px; padding: 6px 8px 4px; }
+.ld-card { background: var(--bg-elev-1); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 6px 8px; }
+.ld-cat { font-family: var(--font-display); font-weight: 600; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--text-muted); margin-bottom: 3px; }
+.ld-row { display: flex; align-items: center; gap: 6px; padding: 3px 0 3px 6px; border-left: 3px solid var(--tc, transparent); margin-left: -6px; border-radius: 2px; }
+.ld-row + .ld-row { margin-top: 4px; }
+.ld-head { width: 26px; height: 26px; border-radius: 50%; object-fit: cover; background: var(--bg-elev-2); flex: 0 0 auto; }
+.ld-head--empty { display: inline-block; }
+.ld-who { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.ld-name { font-size: 12px; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ld-team-logo { width: 13px; height: 13px; object-fit: contain; flex: 0 0 auto; }
+.ld-stat { font-family: var(--font-mono); font-size: 10px; color: var(--text-secondary); line-height: 1.35; }
+
+/* staggered entrance — shared by stats rows/cards (and future tabs) */
+@keyframes rise-in {
+  0% { opacity: 0; transform: translateY(7px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+.rise-in { opacity: 0; animation: rise-in .38s var(--ease-out) both; animation-delay: calc(var(--i, 0) * 42ms); }
+@media (prefers-reduced-motion: reduce) { .rise-in { animation: none; opacity: 1; } }
+
+/* ── collapsible drives ─────────────────────────────────────────────── */
+.drive-card { display: block; width: calc(100% - 2 * var(--space-md)); text-align: left; cursor: pointer; color: inherit; font: inherit; }
+.drive-card .drive-head { display: flex; align-items: center; gap: 8px; }
+.drive-logo { width: 22px; height: 22px; object-fit: contain; flex: 0 0 auto; }
+.drive-card .drive-meta { flex: 1; margin-top: 0; }
+.drive-chev { flex: 0 0 auto; color: var(--text-muted); transition: transform .25s var(--ease-out); }
+.drive-card.open .drive-chev { transform: rotate(180deg); }
+.drive-body { display: grid; grid-template-rows: 0fr; transition: grid-template-rows .3s var(--ease-out); }
+.drive-card.open .drive-body { grid-template-rows: 1fr; }
+.drive-body > .drive-plays { overflow: hidden; min-height: 0; margin-top: 0; border-top: none; padding-top: 0; }
+.drive-card.open .drive-body > .drive-plays { margin-top: 8px; border-top: 1px dashed var(--border-subtle); padding-top: 8px; }
+@media (prefers-reduced-motion: reduce) { .drive-body, .drive-chev { transition: none; } }

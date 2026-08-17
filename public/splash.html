@@ -4,6 +4,9 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>NFL Scoreboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&display=swap" rel="stylesheet" />
 <link rel="stylesheet" href="./splash.css" />
 </head>
 <body class="scorebug">
@@ -58,29 +61,22 @@
     <div class="state-pane" id="live-content" style="display:none">
       <div class="drive-hdr" id="drive-hdr" style="display:none">
         <span class="dh-logo" id="dh-logo"></span>
-        <span>
+        <span style="flex:1">
           <span class="dh-title">CURRENT DRIVE</span><br>
           <span class="dh-meta" id="dh-meta"></span>
         </span>
+        <button class="replay-btn" id="replay-play-btn" type="button" aria-label="Replay last play">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><polyline points="3 3 3 8 8 8"/></svg>
+        </button>
       </div>
-      <div class="penalty-pill" id="penalty-pill">PENALTY</div>
+      <div class="play-banner" id="penalty-pill"></div>
       <div class="situation-strip" id="situation" style="display:none">
         <span class="sit-col"><span class="sit-k">DOWN</span><span class="sit-v" id="sit-dd">—</span></span>
         <span class="sit-div"></span>
         <span class="sit-col"><span class="sit-k">BALL ON</span><span class="sit-v" id="sit-spot">—</span></span>
       </div>
       <div class="fieldwrap">
-        <div class="fieldscene">
-          <div class="poss-pin" id="poss-pin" style="display:none"></div>
-          <div class="fieldplane" id="fieldplane">
-            <div class="ez left" id="ez-left-zone"><span class="ezlabel" id="ez-left"></span>
-              <span class="gp tl"></span><span class="gp bl"></span></div>
-            <div class="ez right" id="ez-right-zone"><span class="ezlabel" id="ez-right"></span>
-              <span class="gp tr"></span><span class="gp br"></span></div>
-            <div class="fline first" id="first-line" style="display:none"></div>
-            <svg class="drive-svg" id="drive-svg" viewBox="0 0 1200 92" preserveAspectRatio="none"></svg>
-          </div>
-        </div>
+        <svg class="field-svg" id="field-svg" viewBox="0 -16 600 118" preserveAspectRatio="xMidYMid meet"></svg>
         <div class="yardnums" id="yard-nums"></div>
       </div>
       <div class="lastplay" id="last-play" style="display:none"></div>
@@ -94,23 +90,7 @@
   </div>
 
   <!-- STATS -->
-  <div class="tab-content" id="tab-box">
-    <div id="leaders-box"></div>
-    <div class="bs-team-tabs">
-      <button class="bs-team-tab active" data-bs-team="away" type="button">
-        <span class="bs-team-tab-logo" id="bs-away-tab-logo"></span>
-        <span class="bs-team-tab-abbr" id="bs-away-tab-abbr">AWAY</span>
-      </button>
-      <button class="bs-team-tab" data-bs-team="home" type="button">
-        <span class="bs-team-tab-logo" id="bs-home-tab-logo"></span>
-        <span class="bs-team-tab-abbr" id="bs-home-tab-abbr">HOME</span>
-      </button>
-    </div>
-    <div class="bs-panel-wrap">
-      <div class="bs-panel active" id="bs-away-panel"></div>
-      <div class="bs-panel" id="bs-home-panel"></div>
-    </div>
-  </div>
+  <div class="tab-content" id="tab-box"></div>
 
   <!-- PLAYS -->
   <div class="tab-plays-wrap tab-content" id="tab-plays">

@@ -129,7 +129,9 @@ function logoHtml(team: NormTeam, sizeClass: string): string {
   const badge = `<span class="logo-badge">${escapeHtml(team.abbr || "?")}</span>`;
   if (!team.id) return badge;
   const local = `/teams/${encodeURIComponent(team.id)}.svg`;
-  const cdn = escapeHtml(team.logo || "");
+  // Payload URL if present, else the deterministic CDN path — either way
+  // there is ALWAYS a second source before the text badge.
+  const cdn = escapeHtml(team.logo || cdnLogo(team));
   const badgeAttr = badge.replace(/"/g, "&quot;");
   const onerr = cdn
     ? `if(!this.dataset.f){this.dataset.f=1;this.src='${cdn}';}else{this.outerHTML='${badgeAttr}';}`
@@ -482,6 +484,27 @@ function setupTvButton(): void {
   host.appendChild(btn);
 }
 
+// ── Team colors ───────────────────────────────────────────────────────────
+// Payload team.color first; this canonical primary map is the fallback so a
+// missing/odd payload value never breaks the color-coded UI.
+const NFL_COLORS: Record<string, string> = {
+  "1": "#a71930", "2": "#00338d", "3": "#0b162a", "4": "#fb4f14", "5": "#311d00",
+  "6": "#003594", "7": "#fb4f14", "8": "#0076b6", "9": "#203731", "10": "#0c2340",
+  "11": "#002c5f", "12": "#e31837", "13": "#000000", "14": "#003594", "15": "#008e97",
+  "16": "#4f2683", "17": "#002244", "18": "#d3bc8d", "19": "#0b2265", "20": "#125740",
+  "21": "#004c54", "22": "#97233f", "23": "#101820", "24": "#0080c6", "25": "#aa0000",
+  "26": "#002244", "27": "#d50a0a", "28": "#5a1414", "29": "#0085ca", "30": "#006778",
+  "33": "#241773", "34": "#03202f",
+};
+// Deterministic ESPN CDN logo (domain already allowed in devvit.json).
+function cdnLogo(t: NormTeam): string {
+  return `https://a.espncdn.com/i/teamlogos/nfl/500/${encodeURIComponent(t.abbr.toLowerCase())}.png`;
+}
+
+function teamColorOf(t: NormTeam, fallback: string): string {
+  return t.color || NFL_COLORS[t.id] || fallback;
+}
+
 // ── Normalization (client twin of the server's NormGame) ──────────────────
 
 function recordOf(c: any): string {
@@ -592,6 +615,11 @@ function parseSituation(summary: any, g: NormGame): Situation | null {
     possTeamId = end.team?.id != null ? String(end.team.id) : "";
   }
 
+  // Possession truth: drives.current.team. Play end.team lies on admin plays
+  // (timeout carries the CALLER's team) — verified against real payloads.
+  const driveTeamId = summary?.drives?.current?.team?.id != null
+    ? String(summary.drives.current.team.id) : "";
+  if (driveTeamId) possTeamId = driveTeamId;
   if (!possTeamId) {
     if (g.homePossession) possTeamId = g.home.id;
     else if (g.awayPossession) possTeamId = g.away.id;
@@ -626,170 +654,544 @@ function firstDownUnit(sit: Situation): number | null {
 }
 const unitPct = (u: number): string => (u / 120 * 100) + "%";
 
+// ── Field (flat SVG, ESPN coordinate system) ─────────────────────────────
+// Perspective is BAKED into coordinates (from ESPN's own FieldSVG): bottom
+// edge x 0..600 at y=86, top edge x 30..570 at y=26, side strip 86..90,
+// play lane at y=56.35, returns on a lower lane at y=65.3. One coordinate
+// space for field, paths, pin, chip, posts — nothing lives outside it.
+
+const FB = (() => {
+  const T = 14, B = 92; // deeper surface (78 vs ESPN's 60) = "see more field"
+  return {
+    T, B, S: B + 4,
+    LANE: T + (B - T) * 0.53,
+    LANE2: T + (B - T) * 0.72,
+    W: 600, TX: 24, TW: 552, // slightly straighter angle than ESPN's 30/540
+  };
+})();
+const xB = (u: number): number => (u / 120) * FB.W;
+const xT = (u: number): number => FB.TX + (u / 120) * FB.TW;
+const LANE_F = (FB.B - FB.LANE) / (FB.B - FB.T);
+const xLane = (u: number): number => xB(u) + (xT(u) - xB(u)) * LANE_F;
+const LANE2_F = (FB.B - FB.LANE2) / (FB.B - FB.T);
+const xLane2 = (u: number): number => xB(u) + (xT(u) - xB(u)) * LANE2_F;
+const clampUnit = (u: number): number => Math.max(10, Math.min(110, u));
+
+// ESPN's goal-post paths, lifted verbatim (gold uprights + grey bases).
+const POSTS_SVG =
+  '<path fill="#6c6e6f" d="M6,48.75s0-.75,2-.75,2,.75,2,.75v8.5s0,.75-2,.75-2-.75-2-.75v-8.5Z"/>' +
+  '<path fill="#e2ce23" d="M13,43c-2.21,0-4,1.79-4,4v2s0,.4-1,.4-1-.4-1-.4v-2c0-3.31,2.69-6,6-6h1v2h-1Z"/>' +
+  '<path fill="#e2ce23" d="M18,10.4v26.6c0,.18-.05.36-.14.51l-6,10c-.23.39-.69.57-1.12.45-.43-.12-.73-.51-.73-.96v-30.6s0-.4,1-.4,1,.4,1,.4v26.99l4-6.67V10.4s0-.4,1-.4,1,.4,1,.4Z"/>' +
+  '<rect fill="#e2ce23" x="11" y="42" width="2" height="2"/>' +
+  '<path fill="#e2ce23" d="M 9.7 16.6 s 0 -0.42 0.83 -0.42 s 0.83 0.42 0.83 0.42 v 27 l -1.82 0"/>' +
+  '<path fill="#6c6e6f" d="M594,57.25s0,.75-2,.75-2-.75-2-.75v-8.5s0-.75,2-.75,2,.75,2,.75v8.5Z"/>' +
+  '<path fill="#e2ce23" d="M586,43v-2h1c3.31,0,6,2.69,6,6v2s0,.4-1,.4-1-.4-1-.4v-2c0-2.21-1.79-4-4-4h-1Z"/>' +
+  '<path fill="#e2ce23" d="M583,10c1,0,1,.4,1,.4v26.32s4,6.67,4,6.67v-26.99s0-.4,1-.4,1,.4,1,.4v30.6c0,.45-.3.84-.73.96-.43.12-.89-.06-1.12-.45l-6-10c-.09-.16-.14-.33-.14-.51V10.4s0-.4,1-.4Z"/>' +
+  '<rect fill="#e2ce23" x="587" y="42" width="2" height="2"/>' +
+  '<path fill="#e2ce23" d="M 588.5 16.6 s 0 -0.42 0.83 -0.42 s 0.83 0.42 0.83 0.42 v 27 l -1.82 0"/>';
+
+function bandPoly(u1: number, u2: number, cls: string, fill?: string): string {
+  const pts = `${xB(u2)} ${FB.B} ${xB(u1)} ${FB.B} ${xT(u1)} ${FB.T} ${xT(u2)} ${FB.T}`;
+  return `<polygon class="${cls}" points="${pts}"${fill ? ` fill="${fill}"` : ""}/>`;
+}
+function sideRect(u1: number, u2: number, cls: string, fill?: string): string {
+  return `<rect class="${cls}" x="${xB(u1)}" y="${FB.B}" width="${xB(u2) - xB(u1)}" height="${FB.S - FB.B}"${fill ? ` fill="${fill}"` : ""}/>`;
+}
+function yardLine(u: number, wide = false): string {
+  return `<line class="fv-tenline" x1="${xT(u)}" y1="${FB.T}" x2="${xB(u)}" y2="${FB.B}"${wide ? ' stroke-width="2"' : ""}/>`;
+}
+
+// End-zone names ride a textPath along the zone's exact midline, so the
+// baseline matches the trapezoid slant with no manual rotation or glyph
+// squishing. Left reads bottom-to-top, right top-to-bottom (ESPN's way).
+function ezNamePaths(): string {
+  const lB = (xB(0) + xB(10)) / 2, lT = (xT(0) + xT(10)) / 2;
+  const rB = (xB(110) + xB(120)) / 2, rT = (xT(110) + xT(120)) / 2;
+  return `<path id="fv-ezpath-l" d="M ${lB} ${FB.B + 1} L ${lT} ${FB.T - 1}" fill="none"/>` +
+    `<path id="fv-ezpath-r" d="M ${rT} ${FB.T - 1} L ${rB} ${FB.B + 1}" fill="none"/>`;
+}
+function ezNameText(g: NormGame, left: boolean): string {
+  const team = left ? g.away : g.home; // EZ labeled by its DEFENDER
+  const nick = (team.nick || team.abbr).toUpperCase();
+  // Oswald (condensed): advance ≈ 0.47 × size. Stay TALL by default (14) and
+  // shrink only when the name would overflow the usable midline (~54 units);
+  // a spacing-only textLength clamp guards the estimate without ever
+  // squishing glyphs (that was the old distortion).
+  const USABLE = Math.hypot(27, FB.B - FB.T) * 0.82;
+  const ADV = 0.47;
+  const size = Math.max(9, Math.min(14, USABLE / (nick.length * ADV)));
+  const est = nick.length * size * ADV;
+  const clampAttr = est > USABLE - 1
+    ? ` textLength="${USABLE}" lengthAdjust="spacing"` : "";
+  return `<text class="fv-ezname" font-size="${size.toFixed(1)}" dy="0.34em">` +
+    `<textPath href="#fv-ezpath-${left ? "l" : "r"}" startOffset="50%" text-anchor="middle"${clampAttr}>` +
+    `${escapeHtml(nick)}</textPath></text>`;
+}
+
 function buildFieldStatics(g: NormGame): void {
-  const plane = $("fieldplane");
-  if (!plane) return;
-  // Yard lines every 10 only (minimalist); midfield slightly stronger.
-  for (let u = 20; u <= 100; u += 10) {
-    const l = document.createElement("div");
-    l.className = "yline" + (u === 60 ? " mid" : "");
-    l.style.left = unitPct(u);
-    plane.insertBefore(l, plane.firstChild);
+  const svg = $("field-svg");
+  if (!svg) return;
+  let s = "";
+  // top bands (10-yd, alternating) + colored EZs
+  for (let u = 10; u < 110; u += 10) {
+    s += bandPoly(u, u + 10, (u / 10) % 2 === 1 ? "fv-band" : "fv-band fv-band--dark");
   }
-  // ESPN convention: end zones labeled by the team DEFENDING them, in that
-  // team's color. Home attacks LEFT, so the left end zone is the away
-  // team's; right is home's.
-  const ezLZone = $("ez-left-zone"), ezRZone = $("ez-right-zone");
-  const ezL = $("ez-left"), ezR = $("ez-right");
-  if (ezL) ezL.textContent = (g.away.nick || g.away.abbr).toUpperCase();
-  if (ezR) ezR.textContent = (g.home.nick || g.home.abbr).toUpperCase();
-  if (ezLZone) ezLZone.style.background = g.away.color || "#5b6474";
-  if (ezRZone) ezRZone.style.background = g.home.color || "#5b6474";
-  // Flat number strip: EZ abbr, 10..50..10, EZ abbr. On narrow screens the
-  // CSS keeps only the EZ abbrs + 20 / 50 / 20 (class "minor" hides).
+  s += bandPoly(0, 10, "fv-ez", g.away.color || "#5b6474");
+  s += bandPoly(110, 120, "fv-ez", g.home.color || "#5b6474");
+  // side strip
+  for (let u = 10; u < 110; u += 10) {
+    s += sideRect(u, u + 10, (u / 10) % 2 === 1 ? "fv-band" : "fv-band fv-band--dark");
+  }
+  s += sideRect(0, 10, "fv-ez", g.away.color || "#5b6474");
+  s += sideRect(110, 120, "fv-ez", g.home.color || "#5b6474");
+  // yard lines (10s only; midfield heavier)
+  for (let u = 20; u <= 100; u += 10) s += yardLine(u, u === 60);
+  s += `<line class="fv-edge" x1="0" y1="${FB.B}" x2="${FB.W}" y2="${FB.B}"/>`;
+  // depth shading: soft gradient down the top surface + a darkened side
+  // strip (ESPN's side-overlay) — the "3D" read on a flat SVG
+  s += `<defs><linearGradient id="fv-depth" x1="0" y1="0" x2="0" y2="1">` +
+    `<stop offset="0" stop-color="rgba(10,24,40,0)"/>` +
+    `<stop offset="0.72" stop-color="rgba(10,24,40,0.02)"/>` +
+    `<stop offset="1" stop-color="rgba(10,24,40,0.10)"/></linearGradient></defs>`;
+  s += `<polygon fill="url(#fv-depth)" points="${xB(120)} ${FB.B} ${xB(0)} ${FB.B} ${xT(0)} ${FB.T} ${xT(120)} ${FB.T}"/>`;
+  s += `<rect class="fv-sideoverlay" x="0" y="${FB.B}" width="${FB.W}" height="${FB.S - FB.B}"/>`;
+  // uprights + EZ names (post paths are ESPN-verbatim for a y=26 top edge;
+  // translate them onto ours)
+  s += `<g transform="translate(0 ${FB.T - 26})">${POSTS_SVG}</g>`;
+  s += ezNamePaths();
+  s += ezNameText(g, true) + ezNameText(g, false);
+  // dynamic layers (order = paint order)
+  s += `<line id="fv-first" class="fv-first" x1="0" y1="${FB.T}" x2="0" y2="${FB.B}" style="display:none"/>`;
+  s += `<g id="fv-drive"></g><g id="fv-play"></g><g id="fv-pin" style="display:none"></g><g id="fv-chip" style="display:none"></g>`;
+  svg.innerHTML = s;
+
+  // Yard markers: HTML labels absolutely positioned at the TRUE yard-line x
+  // positions on the bottom edge (ESPN's FieldView__markers model — fixed
+  // 11px type at every field scale). Mobile keeps abbr · 20 · 50 · 20 · abbr.
   const strip = $("yard-nums");
   if (strip) {
     strip.innerHTML = "";
-    const labels: Array<{ t: string; minor: boolean }> = [
-      { t: g.away.abbr, minor: false },
-      { t: "10", minor: true }, { t: "20", minor: false }, { t: "30", minor: true },
-      { t: "40", minor: true }, { t: "50", minor: false }, { t: "40", minor: true },
-      { t: "30", minor: true }, { t: "20", minor: false }, { t: "10", minor: true },
-      { t: g.home.abbr, minor: false }, { t: "", minor: true },
+    const put = (unit: number, text: string, minor: boolean): void => {
+      const sp = document.createElement("span");
+      sp.textContent = text;
+      sp.className = "fv-mark" + (minor ? " minor" : "");
+      sp.style.left = ((xB(unit) / FB.W) * 100).toFixed(2) + "%";
+      strip.appendChild(sp);
+    };
+    put(5, g.away.abbr, false);
+    const nums: Array<[number, string, boolean]> = [
+      [20, "10", true], [30, "20", false], [40, "30", true], [50, "40", true],
+      [60, "50", false], [70, "40", true], [80, "30", true], [90, "20", false],
+      [100, "10", true],
     ];
-    labels.forEach((l) => {
-      const s = document.createElement("span");
-      s.textContent = l.t;
-      if (l.minor) s.className = "minor";
-      strip.appendChild(s);
-    });
+    nums.forEach(([u, t, minor]) => put(u, t, minor));
+    put(115, g.home.abbr, false);
   }
 }
 
-// ── Drive path drawing ────────────────────────────────────────────────────
-// The current drive renders on the field as play segments (ESPN style):
-//   - completed plays: SOLID lines
-//   - the latest play: DASHED
-//   - ground plays (rush/sack/kneel): straight lines
-//   - air plays (pass/punt/kick/FG): arc that drops back to the field
-//   - penalty plays: yellow; everything else near-black
-//   - arrowhead at the drive front showing direction of travel
+// ── Play decomposition ────────────────────────────────────────────────────
 
-const SVG_W = 1200, SVG_H = 92;
-const unitX = (u: number): number => (u / 120) * SVG_W;
+const ADMIN_PLAY = /timeout|two-minute|end (period|of)/i;
+const KICKOFF_PLAY = /kickoff/i;
+const PUNT_PLAY = /punt/i;
+const FG_PLAY = /field goal|extra point/i;
+const INT_PLAY = /interception/i;
+const AIR_PLAY = /pass|punt|kick|field goal|interception|reception/i;
+const GROUND_OVERRIDE = /sack|kneel|rush|run/i;
+const INCOMPLETE_PLAY = /incompletion|incomplete/i;
 
+function playTypeText(p: any): string {
+  return String(p?.type?.text || p?.type?.abbreviation || "");
+}
+function isAdminPlay(p: any): boolean { return ADMIN_PLAY.test(playTypeText(p)); }
 function isAirPlay(p: any): boolean {
-  const t = String(p?.type?.text || p?.type?.abbreviation || "").toLowerCase();
-  if (/sack|kneel|rush|run/.test(t)) return false;
-  return /pass|punt|kick|field goal|interception|reception/.test(t);
+  const t = playTypeText(p).toLowerCase();
+  if (GROUND_OVERRIDE.test(t)) return false;
+  return AIR_PLAY.test(t);
+}
+function ytgToUnit(ytg: number, frameIsHome: boolean): number {
+  return frameIsHome ? 10 + ytg : 110 - ytg;
+}
+// "DET 28" -> field unit (away defends the LEFT end zone, goal line u=10)
+function spotToUnit(abbr: string, yard: number, g: NormGame): number | null {
+  if (abbr === g.away.abbr) return 10 + yard;
+  if (abbr === g.home.abbr) return 110 - yard;
+  return null;
 }
 
-function playUnits(p: any, offenseIsHome: boolean): { x1: number; x2: number } | null {
+interface PlayGeom { x1: number; x2: number; air: boolean; penalty: boolean; yards: number; }
+
+function playGeom(p: any, offenseIsHome: boolean, homeId: string, awayId: string): PlayGeom | null {
   const s = numOrNull(p?.start?.yardsToEndzone);
   const e = numOrNull(p?.end?.yardsToEndzone);
   if (s == null || e == null) return null;
-  const toUnit = (ytg: number): number => (offenseIsHome ? 10 + ytg : 110 - ytg);
-  return { x1: toUnit(s), x2: toUnit(e) };
-}
-
-function segPath(x1: number, x2: number, air: boolean): string {
-  const y = SVG_H * 0.56;
-  const a = unitX(x1), b = unitX(x2);
-  if (!air || Math.abs(b - a) < 6) return `M ${a} ${y} L ${b} ${y}`;
-  const peak = Math.max(16, SVG_H * 0.56 - Math.min(34, Math.abs(b - a) * 0.10));
-  return `M ${a} ${y} Q ${(a + b) / 2} ${SVG_H * 0.56 - (SVG_H * 0.56 - peak) * 2} ${b} ${y}`;
-}
-
-function renderDrivePath(summary: any, g: NormGame, sit: Situation | null): void {
-  const svg = $("drive-svg");
-  if (!svg) return;
-  const drive = summary?.drives?.current
-    || (summary?.drives?.previous?.length ? summary.drives.previous[summary.drives.previous.length - 1] : null);
-  const plays: any[] = (drive?.plays || [])
-    // Kickoffs are recorded in the KICKING team's frame (verified against the
-    // sample payload — they draw backward in the drive team's frame), and
-    // return plays mix frames mid-play. Minimalist call: the drive path
-    // starts at the first scrimmage snap.
-    .filter((p: any) => !/kickoff/i.test(String(p?.type?.text || "")))
-    .slice(-12);
-  const offenseIsHome = drive?.team?.id != null
-    ? String(drive.team.id) === g.home.id
-    : !!sit?.possIsHome;
-
-  let out = "";
-  const n = plays.length;
-  plays.forEach((p: any, i: number) => {
-    const u = playUnits(p, offenseIsHome);
-    if (!u || (u.x1 === u.x2 && i < n - 1)) return;
-    const latest = i === n - 1;
-    const color = p?.isPenalty ? "var(--penalty-yellow)" : "var(--play-ink)";
-    const dash = latest ? ' stroke-dasharray="7 6"' : "";
-    out += `<path d="${segPath(u.x1, u.x2, isAirPlay(p))}" fill="none" stroke="${color}" stroke-width="2.5" stroke-linecap="round"${dash}/>`;
-  });
-
-  // Direction arrowhead at the drive front (black arrow on the field).
-  const head = sit ? ballUnit(sit) : null;
-  if (head != null) {
-    const hx = unitX(head), y = SVG_H * 0.56;
-    const d = offenseIsHome ? -1 : 1; // home drives left
-    out += `<path d="M ${hx + d * 12} ${y - 6} L ${hx + d * 22} ${y} L ${hx + d * 12} ${y + 6} Z" fill="var(--play-ink)"/>`;
+  const endTeamId = p?.end?.team?.id != null ? String(p.end.team.id) : "";
+  let endFrameIsHome = offenseIsHome;
+  if (endTeamId && (endTeamId === homeId || endTeamId === awayId)) {
+    endFrameIsHome = endTeamId === homeId;
   }
-  svg.innerHTML = out;
+  const startFrameIsHome = KICKOFF_PLAY.test(playTypeText(p)) ? !offenseIsHome : offenseIsHome;
+  return {
+    x1: clampUnit(ytgToUnit(s, startFrameIsHome)),
+    x2: clampUnit(ytgToUnit(e, endFrameIsHome)),
+    air: isAirPlay(p),
+    penalty: p?.isPenalty === true,
+    yards: Number(p?.statYardage) || 0,
+  };
 }
 
-function renderDriveHeader(summary: any, g: NormGame, sit: Situation | null): void {
+function activeDrive(summary: any): any | null {
+  return summary?.drives?.current
+    || (summary?.drives?.previous?.length ? summary.drives.previous[summary.drives.previous.length - 1] : null);
+}
+function offenseOf(summary: any, g: NormGame): { team: NormTeam; isHome: boolean } | null {
+  const drive = activeDrive(summary);
+  const id = drive?.team?.id != null ? String(drive.team.id) : "";
+  if (id === g.home.id) return { team: g.home, isHome: true };
+  if (id === g.away.id) return { team: g.away, isHome: false };
+  if (g.homePossession) return { team: g.home, isHome: true };
+  if (g.awayPossession) return { team: g.away, isHome: false };
+  return null;
+}
+function lastPlays(summary: any): { last: any | null; lastReal: any | null } {
+  const drive = activeDrive(summary);
+  const plays: any[] = drive?.plays || [];
+  let last: any | null = null, lastReal: any | null = null;
+  for (let i = plays.length - 1; i >= 0; i--) {
+    if (!last) last = plays[i];
+    if (!lastReal && !isAdminPlay(plays[i])) lastReal = plays[i];
+    if (last && lastReal) break;
+  }
+  return { last, lastReal };
+}
+
+// One visual step of a play's performance.
+interface Seg {
+  d: string;           // SVG path
+  len: number;         // approx px length (drives duration + mask dash)
+  kind: "arc" | "ground" | "loop" | "return";
+  color: string;
+}
+interface PlayViz { segs: Seg[]; xMark: number | null; badge: string | null; endUnit: number; }
+
+function laneLine(u1: number, u2: number, lane2 = false): string {
+  const y = lane2 ? FB.LANE2 : FB.LANE;
+  const fx = lane2 ? xLane2 : xLane;
+  return `M ${fx(u1).toFixed(1)} ${y} L ${fx(u2).toFixed(1)} ${y}`;
+}
+function arcPath(u1: number, u2: number, kick: boolean): string {
+  const a = xLane(u1), b = xLane(u2), y = FB.LANE;
+  const cy = FB.T + (kick ? 1 : 4);
+  const c1 = a + (b - a) * 0.2, c2 = a + (b - a) * 0.8;
+  return `M ${a.toFixed(1)} ${y} C ${c1.toFixed(1)} ${cy}, ${c2.toFixed(1)} ${cy}, ${b.toFixed(1)} ${y}`;
+}
+function loopPath(u: number, dir: number): string {
+  // small forward curl down to the return lane (ESPN's turnover loop)
+  const x = xLane(u);
+  const midY = (FB.LANE + FB.LANE2) / 2;
+  return `M ${x.toFixed(1)} ${FB.LANE} C ${(x + dir * 7).toFixed(1)} ${FB.LANE} ${(x + dir * 7).toFixed(1)} ${midY.toFixed(1)} ${(x + dir * 2).toFixed(1)} ${FB.LANE2}`;
+}
+function segLen(u1: number, u2: number, arc: boolean): number {
+  const d = Math.abs(xLane(u2) - xLane(u1));
+  return arc ? d * 1.25 + 20 : d;
+}
+
+const CATCH_RE = /(?:kicks|punts)[^.]*? to ([A-Z]{2,4}) (\d{1,2})/;
+const INT_RE = /INTERCEPTED.{0,50}? at ([A-Z]{2,4}) (\d{1,2})/i;
+const FAIR_OR_TB = /fair catch|touchback/i;
+
+// Decompose the last play into performable segments (frame-aware,
+// text-assisted for kicks/punts/INTs).
+function decomposePlay(p: any, off: { team: NormTeam; isHome: boolean }, g: NormGame): PlayViz | null {
+  const gm = playGeom(p, off.isHome, g.home.id, g.away.id);
+  if (!gm) return null;
+  const ink = gm.penalty ? "var(--penalty-yellow)" : "var(--play-ink)";
+  const text = String(p?.text || "");
+  const tType = playTypeText(p);
+  const segs: Seg[] = [];
+  let xMark: number | null = null;
+  let badge: string | null = null;
+  let endUnit = gm.x2;
+
+  const kickish = KICKOFF_PLAY.test(tType) || PUNT_PLAY.test(tType);
+
+  if (INCOMPLETE_PLAY.test(tType)) {
+    // Short arc in the attack direction, red X where it dies. No movement.
+    const dir = off.isHome ? -1 : 1;
+    const to = clampUnit(gm.x1 + dir * 16);
+    segs.push({ d: arcPath(gm.x1, to, false), len: segLen(gm.x1, to, true), kind: "arc", color: ink });
+    xMark = to;
+    endUnit = gm.x1;
+  } else if (INT_PLAY.test(tType)) {
+    const m = text.match(INT_RE);
+    const pick = m ? spotToUnit(m[1]!, Number(m[2]), g) : null;
+    const at = pick != null ? clampUnit(pick) : gm.x2;
+    segs.push({ d: arcPath(gm.x1, at, false), len: segLen(gm.x1, at, true), kind: "arc", color: ink });
+    const dir = off.isHome ? -1 : 1; // offense's direction; return curls onward then heads back
+    segs.push({ d: loopPath(at, dir), len: 18, kind: "loop", color: ink });
+    if (Math.abs(gm.x2 - at) > 0.5) {
+      segs.push({ d: laneLine(at, gm.x2, true), len: segLen(at, gm.x2, false), kind: "return", color: ink });
+      badge = `${Math.round(Math.abs(gm.x2 - at))}-Yd Return`;
+    }
+  } else if (kickish) {
+    const m = text.match(CATCH_RE);
+    const caught = m ? spotToUnit(m[1]!, Number(m[2]), g) : null;
+    const at = caught != null ? clampUnit(caught) : gm.x2;
+    segs.push({ d: arcPath(gm.x1, at, true), len: segLen(gm.x1, at, true), kind: "arc", color: ink });
+    if (!FAIR_OR_TB.test(text) && Math.abs(gm.x2 - at) > 0.5) {
+      segs.push({ d: laneLine(at, gm.x2, true), len: segLen(at, gm.x2, false), kind: "return", color: ink });
+      badge = `${Math.round(Math.abs(gm.x2 - at))}-Yd Return`;
+    }
+  } else if (FG_PLAY.test(tType)) {
+    // Kick sails at the posts behind the attacked end zone.
+    const target = off.isHome ? 3 : 117;
+    segs.push({ d: arcPath(gm.x1, target, true), len: segLen(gm.x1, target, true), kind: "arc", color: ink });
+    endUnit = gm.x1;
+  } else if (gm.air) {
+    segs.push({ d: arcPath(gm.x1, gm.x2, false), len: segLen(gm.x1, gm.x2, true), kind: "arc", color: ink });
+  } else if (Math.abs(gm.x2 - gm.x1) > 0.5) {
+    segs.push({ d: laneLine(gm.x1, gm.x2), len: segLen(gm.x1, gm.x2, false), kind: "ground", color: ink });
+  }
+
+  if (!badge && gm.yards !== 0 && !FG_PLAY.test(tType)) {
+    badge = `${gm.yards > 0 ? "+" : ""}${gm.yards} Yds`;
+  }
+  return { segs, xMark, badge, endUnit };
+}
+
+// ── Renderer ──────────────────────────────────────────────────────────────
+
+const durOf = (len: number): number => Math.max(260, Math.min(1400, len * 4.5));
+
+function ballShape(): string {
+  return `<ellipse rx="5" ry="3.2" fill="#7a4a26" stroke="#4c2f17" stroke-width="0.8"/>` +
+    `<line x1="-2" y1="0" x2="2" y2="0" stroke="#f0e6d8" stroke-width="0.7"/>`;
+}
+
+function pinMarkup(team: NormTeam, u: number): string {
+  const x = xLane(u).toFixed(1);
+  const local = `/teams/${encodeURIComponent(team.id)}.svg`;
+  const T = FB.T;
+  return `<g transform="translate(${x} 0)">` +
+    `<path class="fv-pin-tail" d="M -5 ${T + 7} L 0 ${T + 18} L 5 ${T + 7} Z"/>` +
+    `<circle class="fv-pin-bubble" cy="${T - 5}" r="13"/>` +
+    `<text class="fv-pin-abbr" y="${T - 1.5}" text-anchor="middle">${escapeHtml(team.abbr)}</text>` +
+    `<image href="${local}" x="-10" y="${T - 15}" width="20" height="20" preserveAspectRatio="xMidYMid meet"` +
+    ` onerror="this.setAttribute('href','${cdnLogo(team)}')"/>` +
+    `</g>`;
+}
+
+let lastAnimatedPlayId = "";
+
+function renderFieldViz(summary: any, g: NormGame, sit: Situation | null): void {
+  const svg = $("field-svg");
+  if (!svg || !svg.firstChild) return;
+  const driveG = $("fv-drive"), playG = $("fv-play"), pinG = $("fv-pin"),
+    chipG = $("fv-chip"), first = $("fv-first");
+  if (!driveG || !playG || !pinG || !chipG || !first) return;
+
+  const off = offenseOf(summary, g);
+  const drive = activeDrive(summary);
+  const { last, lastReal } = lastPlays(summary);
+
+  if (!off || !drive) {
+    driveG.innerHTML = ""; playG.innerHTML = "";
+    pinG.style.display = "none"; chipG.style.display = "none";
+    (first as unknown as SVGElement & HTMLElement).style.display = "none";
+    return;
+  }
+
+  const playKey = String(last?.id ?? "");
+  const isNewPlay = !!playKey && playKey !== lastAnimatedPlayId;
+
+  const viz = lastReal ? decomposePlay(lastReal, off, g) : null;
+
+  // spot
+  let spot: number | null = viz ? viz.endUnit : null;
+  if (spot == null && last) {
+    const e = numOrNull(last?.end?.yardsToEndzone);
+    if (e != null) spot = clampUnit(ytgToUnit(e, off.isHome));
+  }
+  if (spot == null && sit && sit.yardsToEndzone != null) {
+    spot = clampUnit(ytgToUnit(sit.yardsToEndzone, off.isHome));
+  }
+
+  // drive line
+  let driveStart: number | null = null;
+  for (const p of drive.plays || []) {
+    if (isAdminPlay(p) || KICKOFF_PLAY.test(playTypeText(p))) continue;
+    const s = numOrNull(p?.start?.yardsToEndzone);
+    if (s != null) { driveStart = clampUnit(ytgToUnit(s, off.isHome)); break; }
+  }
+  driveG.innerHTML = (driveStart != null && spot != null && Math.abs(spot - driveStart) > 1)
+    ? `<path class="fv-driveline" d="${laneLine(driveStart, spot)}"/>` : "";
+
+  // last play performance
+  let chainMs = 0;
+  let out = "";
+  if (viz && viz.segs.length) {
+    if (isNewPlay) {
+      let begin = 60;
+      const mid = "fvm" + Date.now();
+      let defs = "";
+      viz.segs.forEach((seg, i) => {
+        const dur = durOf(seg.len);
+        defs += `<mask id="${mid}-${i}" maskUnits="userSpaceOnUse">` +
+          `<path d="${seg.d}" fill="none" stroke="#fff" stroke-width="10" stroke-linecap="round"` +
+          ` pathLength="100" stroke-dasharray="100" stroke-dashoffset="100">` +
+          `<animate attributeName="stroke-dashoffset" from="100" to="0" dur="${dur}ms"` +
+          ` begin="${begin}ms" fill="freeze" calcMode="spline" keyTimes="0;1" keySplines="0.3 0 0.3 1"/>` +
+          `</path></mask>`;
+        out += `<path d="${seg.d}" fill="none" stroke="${seg.color}" stroke-width="2.4"` +
+          ` stroke-linecap="round" stroke-dasharray="6 5" mask="url(#${mid}-${i})"/>`;
+        // ball rides every segment
+        out += `<g opacity="1"><animate attributeName="opacity" from="1" to="0" begin="${begin + dur + 160}ms" dur="280ms" fill="freeze"/>` +
+          `<g>${ballShape()}<animateMotion path="${seg.d}" begin="${begin}ms" dur="${dur}ms" fill="freeze" rotate="${seg.kind === "arc" ? "auto" : "0"}" calcMode="spline" keyTimes="0;1" keySplines="0.3 0 0.3 1"/></g></g>`;
+        begin += dur + 60;
+      });
+      chainMs = begin;
+      if (viz.xMark != null) {
+        const xm = xLane(viz.xMark);
+        out = `<defs>${defs}</defs>` + out +
+          `<g opacity="0"><animate attributeName="opacity" from="0" to="1" begin="${chainMs - 40}ms" dur="200ms" fill="freeze"/>` +
+          `<path class="fv-x" d="M ${(xm - 4.5).toFixed(1)} ${FB.LANE - 4.5} L ${(xm + 4.5).toFixed(1)} ${FB.LANE + 4.5} M ${(xm + 4.5).toFixed(1)} ${FB.LANE - 4.5} L ${(xm - 4.5).toFixed(1)} ${FB.LANE + 4.5}"/></g>`;
+      } else {
+        out = `<defs>${defs}</defs>` + out;
+      }
+    } else {
+      viz.segs.forEach((seg) => {
+        out += `<path d="${seg.d}" fill="none" stroke="${seg.color}" stroke-width="2.4" stroke-linecap="round" stroke-dasharray="6 5"/>`;
+      });
+      if (viz.xMark != null) {
+        const xm = xLane(viz.xMark);
+        out += `<path class="fv-x" d="M ${(xm - 4.5).toFixed(1)} ${FB.LANE - 4.5} L ${(xm + 4.5).toFixed(1)} ${FB.LANE + 4.5} M ${(xm + 4.5).toFixed(1)} ${FB.LANE - 4.5} L ${(xm - 4.5).toFixed(1)} ${FB.LANE + 4.5}"/>`;
+      }
+    }
+  }
+
+  // direction arrow at the spot
+  if (spot != null) {
+    const d = off.isHome ? -1 : 1;
+    const hx = xLane(clampUnit(spot + d * 1.2));
+    const arrow = `<path class="fv-arrow" d="M ${hx.toFixed(1)} ${FB.LANE - 5.5} L ${(hx + d * 10).toFixed(1)} ${FB.LANE} L ${hx.toFixed(1)} ${FB.LANE + 5.5} Z"/>`;
+    out += isNewPlay
+      ? `<g opacity="0"><animate attributeName="opacity" from="0" to="1" begin="${Math.max(0, chainMs - 60)}ms" dur="220ms" fill="freeze"/>${arrow}</g>`
+      : arrow;
+  }
+  playG.innerHTML = out;
+
+  // pin directly above the arrow, in the same coordinate space
+  if (spot != null) {
+    pinG.innerHTML = pinMarkup(off.team, spot);
+    pinG.style.display = "";
+    if (isNewPlay) {
+      pinG.classList.remove("anim-in");
+      void (pinG as unknown as HTMLElement).offsetWidth;
+      pinG.classList.add("anim-in");
+      (pinG as unknown as HTMLElement).style.animationDelay = `${Math.max(0, chainMs - 80)}ms`;
+    } else {
+      (pinG as unknown as HTMLElement).style.animationDelay = "0ms";
+    }
+  } else pinG.style.display = "none";
+
+  // yardage / return badge below the side strip
+  if (viz?.badge && spot != null) {
+    const bx = xLane(spot);
+    const w = Math.max(46, viz.badge.length * 6.4 + 14);
+    chipG.innerHTML = `<rect class="fv-chipbg${lastReal?.isPenalty ? " pen" : ""}" x="${(bx - w / 2).toFixed(1)}" y="${(FB.LANE2 + 5).toFixed(1)}" rx="4" width="${w.toFixed(1)}" height="13"/>` +
+      `<text class="fv-chiptext${lastReal?.isPenalty ? " pen" : ""}" x="${bx.toFixed(1)}" y="${(FB.LANE2 + 14.3).toFixed(1)}" text-anchor="middle">${escapeHtml(viz.badge)}</text>`;
+    chipG.style.display = "";
+    if (isNewPlay) {
+      chipG.classList.remove("anim-in");
+      void (chipG as unknown as HTMLElement).offsetWidth;
+      chipG.classList.add("anim-in");
+      (chipG as unknown as HTMLElement).style.animationDelay = `${chainMs}ms`;
+    } else (chipG as unknown as HTMLElement).style.animationDelay = "0ms";
+  } else chipG.style.display = "none";
+
+  // first-down line (slanted, gold)
+  const dist = sit?.distance ?? numOrNull(lastReal?.end?.distance);
+  if (spot != null && dist != null && dist > 0) {
+    const f = clampUnit(off.isHome ? spot - dist : spot + dist);
+    first.setAttribute("x1", String(xT(f).toFixed(1)));
+    first.setAttribute("y1", String(FB.T));
+    first.setAttribute("x2", String(xB(f).toFixed(1)));
+    first.setAttribute("y2", String(FB.B));
+    (first as unknown as HTMLElement).style.display = "";
+  } else (first as unknown as HTMLElement).style.display = "none";
+
+  if (isNewPlay) lastAnimatedPlayId = playKey;
+}
+
+function renderDriveHeader(summary: any, g: NormGame): void {
   const hdr = $("drive-hdr");
   if (!hdr) return;
   const drive = summary?.drives?.current;
-  if (!drive) { hdr.style.display = "none"; return; }
-  const offense = String(drive?.team?.id) === g.home.id ? g.home
-    : String(drive?.team?.id) === g.away.id ? g.away
-    : sit?.possIsHome ? g.home : g.away;
+  const off = offenseOf(summary, g);
+  if (!drive || !off) { hdr.style.display = "none"; return; }
   const meta = [
-    `${(drive?.plays || []).length} plays`,
+    `${(drive?.plays || []).filter((p: any) => !isAdminPlay(p)).length} plays`,
     drive?.yards != null ? `${drive.yards} yards` : "",
     drive?.timeElapsed?.displayValue || "",
   ].filter(Boolean).join(", ");
   const logoEl = $("dh-logo");
-  if (logoEl) logoEl.innerHTML = logoHtml(offense, "dh-logo-img");
+  if (logoEl) logoEl.innerHTML = logoHtml(off.team, "dh-logo-img");
   const metaEl = $("dh-meta");
   if (metaEl) metaEl.textContent = meta;
   hdr.style.display = "";
 }
 
-function renderField(summary: any, g: NormGame, sit: Situation | null): void {
-  const first = $("first-line"), pin = $("poss-pin"), lp = $("last-play");
-  if (!first || !pin || !lp) return;
-  const b = sit ? ballUnit(sit) : null;
-
-  if (b == null) {
-    pin.style.display = "none";
-    first.style.display = "none";
-  } else {
-    // Possession pin: upright bubble with the offense's logo at the spot.
-    const team = sit!.possIsHome ? g.home : g.away;
-    pin.innerHTML = logoHtml(team, "pin-logo");
-    pin.style.left = unitPct(b);
-    pin.style.display = "flex";
-    const f = firstDownUnit(sit!);
-    if (f != null) { first.style.left = unitPct(f); first.style.display = ""; }
-    else first.style.display = "none";
+function replayLastPlay(): void {
+  lastAnimatedPlayId = "";
+  if (lastSummary && lastGame) {
+    const sit = parseSituation(lastSummary, lastGame);
+    renderFieldViz(lastSummary, lastGame, sit);
   }
+}
 
-  renderDrivePath(summary, g, sit);
-  renderDriveHeader(summary, g, sit);
-
-  // Penalty pill on flagged latest play.
-  const lastP = lastPlayOf(summary);
+function renderPlayBanner(summary: any, g: NormGame): void {
   const pill = $("penalty-pill");
-  if (pill) pill.classList.toggle("on", lastP?.isPenalty === true);
+  if (!pill) return;
+  const { last, lastReal } = lastPlays(summary);
+  const p = (last?.isPenalty === true ? last : lastReal?.isPenalty === true ? lastReal : null);
+  if (p) {
+    const m = String(p?.text || "").match(/PENALTY on ([A-Z]{2,4})[^,]*,\s*([^,.]+)/);
+    const abbr = m?.[1] || "";
+    const name = (m?.[2] || "Penalty").trim();
+    const team = abbr === g.home.abbr ? g.home : abbr === g.away.abbr ? g.away : null;
+    pill.className = "play-banner on pen";
+    pill.innerHTML = (team ? `<span class="pb-logo">${logoHtml(team, "pb-logo-img")}</span>` : "") +
+      escapeHtml(name);
+    return;
+  }
+  const scorer = lastReal?.scoringPlay === true ? lastReal : null;
+  if (scorer) {
+    const off = offenseOf(summary, g);
+    const label = String(scorer?.type?.text || "Score").toUpperCase();
+    pill.className = "play-banner on score";
+    pill.innerHTML = (off ? `<span class="pb-logo">${logoHtml(off.team, "pb-logo-img")}</span>` : "") +
+      escapeHtml(label);
+    return;
+  }
+  pill.className = "play-banner";
+  pill.innerHTML = "";
+}
 
-  if (sit?.lastPlayText) {
-    const title = String(lastP?.type?.text || "Last Play");
-    lp.innerHTML = `<div class="lp-head"><span class="lp-title">${escapeHtml(title)}</span>` +
-      `<span class="lp-chip">LAST PLAY</span></div>` + escapeHtml(sit.lastPlayText);
-    lp.style.display = "";
-  } else lp.style.display = "none";
+function renderField(summary: any, g: NormGame, sit: Situation | null): void {
+  const lp = $("last-play");
+  renderFieldViz(summary, g, sit);
+  renderDriveHeader(summary, g);
+  renderPlayBanner(summary, g);
+
+  if (lp) {
+    if (sit?.lastPlayText) {
+      const { last } = lastPlays(summary);
+      const title = String(last?.type?.text || "Last Play");
+      lp.innerHTML = `<div class="lp-head"><span class="lp-title">${escapeHtml(title)}</span>` +
+        `<span class="lp-chip">LAST PLAY</span></div>` + escapeHtml(sit.lastPlayText);
+      lp.style.display = "";
+    } else lp.style.display = "none";
+  }
 }
 
 // ── Linescore (quarters) ──────────────────────────────────────────────────
@@ -890,15 +1292,9 @@ function renderPregame(g: NormGame): void {
 function renderFinal(g: NormGame): void {
   const body = $("final-body");
   if (!body) return;
-  const tie = g.home.score === g.away.score;
-  const winner = tie ? null : (g.home.score > g.away.score ? g.home : g.away);
-  const headline = winner
-    ? `${escapeHtml(winner.name)} win, ${Math.max(g.home.score, g.away.score)}–${Math.min(g.home.score, g.away.score)}`
-    : `Tie game, ${g.home.score}–${g.away.score}`;
-  let html = `<div class="ended-display" style="padding:14px 0 4px">` +
-    `<div class="ended-headline">${headline}</div>` +
-    `<div class="ended-divider"></div>` +
-    `<div class="ended-text">${escapeHtml(g.statusDetail || "Final")}${g.venue?.fullName ? " · " + escapeHtml(String(g.venue.fullName)) : ""}</div></div>`;
+  // No "X beat Y 17-7" headline — the scoreboard already says it.
+  let html = `<div class="wrap-meta">${escapeHtml(g.statusDetail || "Final")}` +
+    `${g.venue?.fullName ? " · " + escapeHtml(String(g.venue.fullName)) : ""}</div>`;
   // Scoring summary + highlights render below via the shared builders.
   html += `<div id="final-scoring"></div><div class="clips-grid" id="final-clips"></div>`;
   body.innerHTML = html;
@@ -920,42 +1316,104 @@ function renderPostponed(g: NormGame): void {
 
 // ── STATS tab (leaders + team + player tables) ────────────────────────────
 
-function buildLeadersHtml(): string {
-  const L: any[] = lastSummary?.leaders || [];
-  if (!L.length) return "";
-  let rows = "";
-  L.forEach((side: any) => {
-    const abbr = side?.team?.abbreviation || "";
-    (side?.leaders || []).forEach((cat: any) => {
-      const top = cat?.leaders?.[0];
-      if (!top) return;
-      const nm = top.athlete?.displayName || "";
-      const label = String(cat.displayName || cat.name || "").replace(/Yards$/, "");
-      rows += `<tr><td>${escapeHtml(abbr)} ${escapeHtml(label)}</td><td>${escapeHtml(nm)}</td><td>${escapeHtml(String(top.displayValue || ""))}</td></tr>`;
-    });
-  });
-  if (!rows) return "";
-  return `<div class="bs-section-hdr"><span class="bs-dot"></span>Leaders</div><table class="leaders-table"><tbody>${rows}</tbody></table>`;
+let statsView: "team" | "players" = "team";
+let statsAnimate = false; // entrance animation only on tab/sub-tab switch, not every poll
+
+const LOWER_BETTER = /turnover|penalt|interception|fumbles lost|sacks-yards lost/i;
+
+function statNum(v: string): number | null {
+  const s = String(v).trim();
+  const clock = s.match(/^(\d+):(\d{2})$/);          // 26:38 time of possession
+  if (clock) return Number(clock[1]) * 60 + Number(clock[2]);
+  const frac = s.match(/^(\d+)\s*-\s*(\d+)$/);        // 5-12 efficiency, 2-30 penalties
+  if (frac) return Number(frac[1]);
+  const n = parseFloat(s);
+  return isFinite(n) ? n : null;
 }
 
-function buildTeamStatsHtml(g: NormGame): string {
+function logoImg(t: NormTeam, cls: string): string {
+  const cdn = cdnLogo(t);
+  return `<img class="${cls}" src="/teams/${encodeURIComponent(t.id)}.svg" alt="${escapeHtml(t.abbr)}"` +
+    ` onerror="if(!this.dataset.f){this.dataset.f=1;this.src='${cdn}';}else{this.style.display='none';}">`;
+}
+
+function buildTeamCompare(g: NormGame): string {
   const bteams: any[] = lastSummary?.boxscore?.teams || [];
-  if (bteams.length !== 2) return "";
+  if (bteams.length !== 2) return '<div class="bs-empty">No team stats yet</div>';
   let a = bteams[0], h = bteams[1];
   if (String(a?.team?.id) === g.home.id) { const t = a; a = h; h = t; }
+  const ac = teamColorOf(g.away, "#d50a0a"), hc = teamColorOf(g.home, "#013369");
+
   const rows: Record<string, { label: string; a?: string; h?: string }> = {};
   (a?.statistics || []).forEach((st: any) => { rows[st.name] = { label: st.label || st.name, a: st.displayValue }; });
   (h?.statistics || []).forEach((st: any) => {
     rows[st.name] = rows[st.name] || { label: st.label || st.name };
     rows[st.name]!.h = st.displayValue;
   });
-  let body = "";
+
+  let out = `<div class="ts-head"><span class="ts-head-team">${logoImg(g.away, "ts-logo")}</span>` +
+    `<span class="ts-head-label">TEAM STATS</span>` +
+    `<span class="ts-head-team">${logoImg(g.home, "ts-logo")}</span></div>`;
+
+  let i = 0;
   Object.keys(rows).forEach((k) => {
     const r = rows[k]!;
-    body += `<tr><td class="bs-player">${escapeHtml(r.label)}</td><td>${escapeHtml(r.a || "—")}</td><td>${escapeHtml(r.h || "—")}</td></tr>`;
+    const av = statNum(r.a ?? ""), hv = statNum(r.h ?? "");
+    const lower = LOWER_BETTER.test(r.label) || LOWER_BETTER.test(k);
+    let aWin = false, hWin = false, aPct = 50;
+    if (av != null && hv != null && av + hv > 0) {
+      aPct = (av / (av + hv)) * 100;
+      if (av !== hv) { aWin = lower ? av < hv : av > hv; hWin = !aWin; }
+    }
+    out += `<div class="ts-row${statsAnimate ? " rise-in" : ""}" style="--i:${i++}">` +
+      `<div class="ts-vals"><span class="ts-val${aWin ? " win" : ""}"${aWin ? ` style="color:${ac}"` : ""}>${escapeHtml(r.a ?? "—")}</span>` +
+      `<span class="ts-label">${escapeHtml(r.label)}</span>` +
+      `<span class="ts-val${hWin ? " win" : ""}"${hWin ? ` style="color:${hc}"` : ""}>${escapeHtml(r.h ?? "—")}</span></div>` +
+      `<div class="ts-bar"><span style="width:${aPct.toFixed(1)}%;background:${ac}"></span>` +
+      `<span style="width:${(100 - aPct).toFixed(1)}%;background:${hc}"></span></div></div>`;
   });
-  return `<div class="bs-section-hdr"><span class="bs-dot"></span>Team stats</div>` +
-    `<table class="bs-table"><thead><tr><th class="bs-th-player"></th><th>${escapeHtml(g.away.abbr)}</th><th>${escapeHtml(g.home.abbr)}</th></tr></thead><tbody>${body}</tbody></table>`;
+  return out;
+}
+
+const LEADER_LABELS: Record<string, string> = {
+  passingYards: "Passing", rushingYards: "Rushing", receivingYards: "Receiving",
+  sacks: "Sacks", totalTackles: "Tackles", interceptions: "Interceptions",
+};
+
+function buildLeaderCards(g: NormGame): string {
+  const L: any[] = lastSummary?.leaders || [];
+  if (!L.length) return '<div class="bs-empty">No leaders yet</div>';
+  const byCat = new Map<string, { away?: any; home?: any }>();
+  L.forEach((side: any) => {
+    const isHome = String(side?.team?.id) === g.home.id;
+    (side?.leaders || []).forEach((cat: any) => {
+      const top = cat?.leaders?.[0];
+      if (!top) return;
+      const key = String(cat.name || cat.displayName || "");
+      const cur = byCat.get(key) || {};
+      if (isHome) cur.home = top; else cur.away = top;
+      byCat.set(key, cur);
+    });
+  });
+  const ac = teamColorOf(g.away, "#d50a0a"), hc = teamColorOf(g.home, "#013369");
+  let out = "";
+  let i = 0;
+  byCat.forEach((pair, key) => {
+    const label = LEADER_LABELS[key] || String(key).replace(/([A-Z])/g, " $1").replace(/^./, (c) => c.toUpperCase());
+    const row = (top: any, _team: NormTeam, color: string): string => {
+      if (!top) return "";
+      const ath = top.athlete || {};
+      const head = ath.headshot?.href ? String(ath.headshot.href) : "";
+      return `<div class="ld-row" style="--tc:${color}">` +
+        (head ? `<img class="ld-head" loading="lazy" src="${escapeHtml(head)}" alt="" onerror="this.style.display='none'">` : `<span class="ld-head ld-head--empty"></span>`) +
+        `<span class="ld-who"><span class="ld-name">${escapeHtml(ath.shortName || ath.displayName || "")}</span>` +
+        `<span class="ld-stat">${escapeHtml(String(top.displayValue || ""))}</span></span></div>`;
+    };
+    out += `<div class="ld-card${statsAnimate ? " rise-in" : ""}" style="--i:${i++}">` +
+      `<div class="ld-cat">${escapeHtml(label)}</div>` +
+      row(pair.away, g.away, ac) + row(pair.home, g.home, hc) + `</div>`;
+  });
+  return `<div class="ld-grid">${out}</div>`;
 }
 
 function buildPlayerPanel(teamId: string): string {
@@ -984,40 +1442,43 @@ function buildPlayerPanel(teamId: string): string {
 
 function renderStatsTab(): void {
   const g = lastGame;
-  if (!g) return;
-  const leadersEl = $("leaders-box");
-  if (leadersEl) leadersEl.innerHTML = buildLeadersHtml() + buildTeamStatsHtml(g);
+  const root = $("tab-box");
+  if (!g || !root) return;
 
-  const aa = $("bs-away-tab-abbr"), ha = $("bs-home-tab-abbr");
-  if (aa) aa.textContent = g.away.abbr || "AWAY";
-  if (ha) ha.textContent = g.home.abbr || "HOME";
-  setLogoHolder("bs-away-tab-logo", g.away, "bs-team-tab-logo");
-  setLogoHolder("bs-home-tab-logo", g.home, "bs-team-tab-logo");
+  let html = `<div class="plays-toggle" id="stats-toggle" data-active="${statsView}">` +
+    `<button class="plays-seg${statsView === "team" ? " is-active" : ""}" data-stats="team" type="button">Team</button>` +
+    `<button class="plays-seg${statsView === "players" ? " is-active" : ""}" data-stats="players" type="button">Players</button></div>`;
 
-  const wrap = document.querySelector(".bs-panel-wrap") as HTMLElement | null;
-  const saved = wrap?.scrollTop ?? 0;
-  const ap = $("bs-away-panel"), hp = $("bs-home-panel");
-  if (ap) ap.innerHTML = buildPlayerPanel(g.away.id);
-  if (hp) hp.innerHTML = buildPlayerPanel(g.home.id);
-  if (wrap) wrap.scrollTop = saved;
-}
+  if (statsView === "team") {
+    html += `<div class="ts-wrap">${buildTeamCompare(g)}</div>`;
+  } else {
+    html += buildLeaderCards(g);
+    html += `<div class="bs-team-tabs">` +
+      `<button class="bs-team-tab${statsBoxTeam === "away" ? " active" : ""}" data-bs-team="away" type="button">` +
+      `<span class="bs-team-tab-logo">${logoImg(g.away, "bs-team-tab-logo")}</span></button>` +
+      `<button class="bs-team-tab${statsBoxTeam === "home" ? " active" : ""}" data-bs-team="home" type="button">` +
+      `<span class="bs-team-tab-logo">${logoImg(g.home, "bs-team-tab-logo")}</span></button></div>` +
+      `<div class="bs-panel-wrap"><div class="bs-panel active">` +
+      buildPlayerPanel(statsBoxTeam === "home" ? g.home.id : g.away.id) + `</div></div>`;
+  }
+  root.innerHTML = html;
+  statsAnimate = false; // consumed
 
-function setupBoxScoreTeamTabs(): void {
-  document.querySelectorAll(".bs-team-tab").forEach((btn) => {
+  root.querySelectorAll<HTMLElement>("#stats-toggle .plays-seg").forEach((seg) => {
+    seg.addEventListener("click", () => {
+      const v = seg.getAttribute("data-stats");
+      if (v === "team" || v === "players") { statsView = v; statsAnimate = true; renderStatsTab(); }
+    });
+  });
+  root.querySelectorAll<HTMLElement>(".bs-team-tab").forEach((btn) => {
     btn.addEventListener("click", () => {
-      const team = (btn as HTMLElement).dataset.bsTeam;
-      if (!team) return;
-      document.querySelectorAll(".bs-team-tab").forEach((b) => b.classList.remove("active"));
-      btn.classList.add("active");
-      document.querySelectorAll(".bs-panel").forEach((p) => p.classList.remove("active"));
-      $(`bs-${team}-panel`)?.classList.add("active");
-      document.body.scrollTop = 0;
-      document.documentElement.scrollTop = 0;
-      const wrap = document.querySelector(".bs-panel-wrap") as HTMLElement | null;
-      if (wrap) wrap.scrollTop = 0;
+      const t = btn.dataset.bsTeam;
+      if (t === "away" || t === "home") { statsBoxTeam = t; renderStatsTab(); }
     });
   });
 }
+
+let statsBoxTeam: "away" | "home" = "away";
 
 // ── PLAYS tab (scoring | drives) + highlights ─────────────────────────────
 
@@ -1047,44 +1508,71 @@ function driveResultClass(result: string): string {
   return "";
 }
 
-function buildDriveCards(): string {
+const openDrives = new Set<string>();
+let playsAnimate = false;
+
+function driveTeamOf(d: any, g: NormGame): NormTeam | null {
+  const id = d?.team?.id != null ? String(d.team.id) : "";
+  return id === g.home.id ? g.home : id === g.away.id ? g.away : null;
+}
+
+function buildDriveCards(g: NormGame): string {
   const s = lastSummary || {};
-  const list: Array<{ d: any; current: boolean }> = [];
-  if (s.drives?.current) list.push({ d: s.drives.current, current: true });
+  const list: Array<{ d: any; current: boolean; key: string }> = [];
+  if (s.drives?.current) list.push({ d: s.drives.current, current: true, key: "cur" });
   const prev: any[] = s.drives?.previous || [];
-  for (let i = prev.length - 1; i >= 0; i--) list.push({ d: prev[i], current: false });
+  for (let i = prev.length - 1; i >= 0; i--) list.push({ d: prev[i], current: false, key: "d" + i });
   if (!list.length) return '<div class="plays-empty">No drives yet</div>';
 
   return list.map((w, idx) => {
     const d = w.d;
-    const team = d?.team?.abbreviation || d?.team?.displayName || "";
+    const team = driveTeamOf(d, g);
+    const who = team ? logoImg(team, "drive-logo") :
+      `<span class="drive-who">${escapeHtml(d?.team?.abbreviation || "")}</span>`;
     const result = String(d?.displayResult || d?.result || (w.current ? "IN PROGRESS" : ""));
+    const cls = driveResultClass(result);
     const meta = [
       d?.offensivePlays != null ? `${d.offensivePlays} plays` : "",
       d?.yards != null ? `${d.yards} yds` : "",
       d?.timeElapsed?.displayValue || "",
     ].filter(Boolean).join(" · ");
-    let playsHtml = "";
     const plays: any[] = d?.plays || [];
-    if ((w.current || idx === 0) && plays.length) {
-      playsHtml = '<div class="drive-plays">' + plays.slice(-8).map((p: any) => {
+    const open = openDrives.has(w.key);
+    let playsHtml = "";
+    if (plays.length) {
+      playsHtml = '<div class="drive-body"><div class="drive-plays">' + plays.map((p: any) => {
         const dd = p?.start?.downDistanceText || p?.start?.shortDownDistanceText || "";
         return `<div class="p">${dd ? `<div class="pdd">${escapeHtml(dd)}</div>` : ""}${escapeHtml(String(p?.text || ""))}</div>`;
-      }).join("") + "</div>";
+      }).join("") + "</div></div>";
     }
-    return `<div class="drive-card${w.current ? " current" : ""}">` +
-      `<div class="drive-head"><span class="drive-who">${escapeHtml(team)}</span>` +
-      `<span class="drive-result ${driveResultClass(result)}${w.current ? " progress" : ""}">${escapeHtml(result)}</span></div>` +
-      `<div class="drive-meta">${escapeHtml(meta)}${d?.description ? " — " + escapeHtml(String(d.description)) : ""}</div>` +
-      playsHtml + "</div>";
+    return `<button type="button" class="drive-card${w.current ? " current" : ""}${open ? " open" : ""}` +
+      `${playsAnimate ? " rise-in" : ""}" data-drive="${w.key}" style="--i:${idx}">` +
+      `<div class="drive-head">${who}` +
+      `<span class="drive-meta">${escapeHtml(meta)}</span>` +
+      `<span class="drive-result ${cls}${w.current ? " progress" : ""}">${escapeHtml(result)}</span>` +
+      `<svg class="drive-chev" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 9l6 6 6-6"/></svg>` +
+      `</div>${playsHtml}</button>`;
   }).join("");
 }
 
 function renderPlaysTab(): void {
+  const g = lastGame;
+  if (!g) return;
   const scoring = $("scoring-plays-list");
   const drives = $("all-plays-list");
   if (scoring) scoring.innerHTML = buildScoringCards(false);
-  if (drives) drives.innerHTML = buildDriveCards();
+  if (drives) {
+    drives.innerHTML = buildDriveCards(g);
+    drives.querySelectorAll<HTMLElement>(".drive-card[data-drive]").forEach((card) => {
+      card.addEventListener("click", () => {
+        const key = card.getAttribute("data-drive");
+        if (!key) return;
+        if (openDrives.has(key)) openDrives.delete(key); else openDrives.add(key);
+        card.classList.toggle("open");
+      });
+    });
+  }
+  playsAnimate = false;
   void loadClipsInto("plays-clips");
 }
 
@@ -1603,6 +2091,7 @@ function setupTabs(): void {
     btn.addEventListener("click", () => {
       const targetTab = (btn as HTMLElement).dataset.tab;
       if (!targetTab) return;
+      document.body.classList.toggle("on-game-tab", targetTab === "game");
       document.body.classList.toggle("on-box-tab", targetTab === "box");
       document.body.classList.toggle("on-standings-tab", targetTab === "standings");
       document.querySelectorAll(".tab").forEach((t) => t.classList.remove("tab-active"));
@@ -1616,9 +2105,11 @@ function setupTabs(): void {
       if (region) region.scrollTop = 0;
 
       if (targetTab === "box" && lastSummary) {
+        statsAnimate = true;
         try { renderStatsTab(); } catch (e) { reportError("renderStatsTab", e); }
       }
       if (targetTab === "plays") {
+        playsAnimate = true;
         if (lastSummary) {
           try { renderPlaysTab(); } catch (e) { reportError("renderPlaysTab", e); }
         }
@@ -1698,9 +2189,9 @@ async function fetchAndRender(id: string): Promise<void> {
 }
 
 (async (): Promise<void> => {
+  document.body.classList.add("on-game-tab");
   setupTabs();
   setupPlaysToggle();
-  setupBoxScoreTeamTabs();
   setupWinProbDismiss();
   setupThemeToggle();
   setupExpand();
@@ -1708,6 +2199,7 @@ async function fetchAndRender(id: string): Promise<void> {
   setupTvButton();
   setupStandings();
   setupInlinePager();
+  $("replay-play-btn")?.addEventListener("click", replayLastPlay);
 
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden && pollInterval !== null && eventId != null) {
