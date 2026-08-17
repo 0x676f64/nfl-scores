@@ -1040,7 +1040,10 @@ function renderFieldViz(summary: any, g: NormGame, sit: Situation | null): void 
     return;
   }
 
-  const playKey = String(last?.id ?? "");
+  // Key on the play being VISUALIZED. Admin plays (timeouts, two-minute,
+  // end-period) get fresh ids but change nothing on the field — keying on
+  // `last` made them re-perform the previous play.
+  const playKey = String(lastReal?.id ?? last?.id ?? "");
   const isNewPlay = !!playKey && playKey !== lastAnimatedPlayId;
 
   const viz = lastReal ? decomposePlay(lastReal, off, g) : null;

@@ -1237,7 +1237,7 @@ function renderFieldViz(summary, g, sit) {
     first.style.display = "none";
     return;
   }
-  const playKey = String(last?.id ?? "");
+  const playKey = String(lastReal?.id ?? last?.id ?? "");
   const isNewPlay = !!playKey && playKey !== lastAnimatedPlayId;
   const viz = lastReal ? decomposePlay(lastReal, off, g) : null;
   let spot = viz ? viz.endUnit : null;

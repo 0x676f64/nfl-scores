@@ -89,6 +89,20 @@ seq.forEach((entry, i) => {
   const cur = clone(drivesPrev[di]);
   cur.plays = (drivesPrev[di].plays || []).slice(0, pi + 1).map(clone);
   delete cur.displayResult; delete cur.result; // in progress — no result yet
+  // Drive meta must be AS OF this play, not the drive's final totals —
+  // otherwise the CURRENT DRIVE header reads the future during replay.
+  {
+    const ADMIN = /timeout|two-minute|end (period|of)/i;
+    const KICK = /kickoff/i;
+    const counted = cur.plays.filter((q) => {
+      const t = String(q?.type?.text || "");
+      return !ADMIN.test(t) && !KICK.test(t);
+    });
+    cur.offensivePlays = counted.length;
+    cur.yards = counted.reduce((sum, q) => sum + (Number(q?.statYardage) || 0), 0);
+    delete cur.timeElapsed; // not honestly reconstructable mid-drive
+    delete cur.description;
+  }
   s.drives = { current: cur, previous: prevDone };
 
   // scoring plays seen so far
