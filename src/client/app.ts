@@ -1350,17 +1350,113 @@ function renderPregame(g: NormGame): void {
   body.innerHTML = html;
 }
 
+const YDS_RE = /(\d+(?:\.\d+)?)\s*YDS/i;
+
+function leaderYards(top: any): number {
+  const dv = String(top?.displayValue || "");
+  const m = dv.match(YDS_RE);
+  if (m) return parseFloat(m[1]!);
+  const n = parseFloat(dv);
+  return isFinite(n) ? n : 0;
+}
+
+interface Performer { name: string; head: string; big: string; unit: string; sub: string; team: NormTeam; }
+
+function gameLeaderFor(catName: string, g: NormGame): Performer | null {
+  const L: any[] = lastSummary?.leaders || [];
+  let best: Performer | null = null;
+  let bestVal = -1;
+  L.forEach((side: any) => {
+    const team = String(side?.team?.id) === g.home.id ? g.home : g.away;
+    (side?.leaders || []).forEach((cat: any) => {
+      if (String(cat?.name) !== catName) return;
+      const top = cat?.leaders?.[0];
+      if (!top) return;
+      const v = leaderYards(top);
+      if (v > bestVal) {
+        bestVal = v;
+        best = {
+          name: String(top.athlete?.shortName || top.athlete?.displayName || ""),
+          head: top.athlete?.headshot?.href ? String(top.athlete.headshot.href) : "",
+          big: String(Math.round(v)),
+          unit: "YDS",
+          sub: String(top.displayValue || ""),
+          team,
+        };
+      }
+    });
+  });
+  return bestVal > 0 ? best : null;
+}
+
+function sackLeader(g: NormGame): Performer | null {
+  const bplayers: any[] = lastSummary?.boxscore?.players || [];
+  let best: Performer | null = null;
+  let bestVal = 0;
+  bplayers.forEach((side: any) => {
+    const team = String(side?.team?.id) === g.home.id ? g.home : g.away;
+    (side?.statistics || []).forEach((grp: any) => {
+      // Defensive group ONLY — the passing group also has a SACKS column
+      // (sacks TAKEN), which would crown the sacked QB. Verified on real data.
+      if (!/defens/i.test(String(grp?.name || grp?.text || ""))) return;
+      const labels: string[] = grp?.labels || [];
+      const idx = labels.findIndex((l) => /^SACKS?$/i.test(l));
+      if (idx < 0) return;
+      (grp?.athletes || []).forEach((row: any) => {
+        const v = parseFloat(String(row?.stats?.[idx] ?? "0")) || 0;
+        if (v > bestVal) {
+          bestVal = v;
+          best = {
+            name: String(row.athlete?.shortName || row.athlete?.displayName || ""),
+            head: row.athlete?.headshot?.href ? String(row.athlete.headshot.href) : "",
+            big: String(v),
+            unit: v === 1 ? "SACK" : "SACKS",
+            sub: "",
+            team,
+          };
+        }
+      });
+    });
+  });
+  return bestVal > 0 ? best : null; // a zero-sack game shows no sack card
+}
+
+function buildTopPerformers(g: NormGame): string {
+  const cats: Array<{ label: string; p: Performer | null }> = [
+    { label: "Passing", p: gameLeaderFor("passingYards", g) },
+    { label: "Rushing", p: gameLeaderFor("rushingYards", g) },
+    { label: "Receiving", p: gameLeaderFor("receivingYards", g) },
+    { label: "Sacks", p: sackLeader(g) },
+  ];
+  const cards = cats.filter((c) => c.p);
+  if (!cards.length) return "";
+  let out = `<div class="tp-hdr">TOP PERFORMERS</div><div class="tp-grid">`;
+  cards.forEach((c, i) => {
+    const p = c.p!;
+    const color = railColorOf(p.team, p.team.id === g.home.id ? "#013369" : "#d50a0a");
+    out += `<div class="tp-card rise-in" style="--i:${i};--tc:${color}">` +
+      `<div class="tp-cat">${escapeHtml(c.label)}</div>` +
+      `<div class="tp-row">` +
+      (p.head ? `<img class="tp-head" loading="lazy" src="${escapeHtml(p.head)}" alt="" onerror="this.style.display='none'">` : "") +
+      `<span class="tp-name">${escapeHtml(p.name)}</span></div>` +
+      `<div class="tp-big">${escapeHtml(p.big)}<small>${escapeHtml(p.unit)}</small></div>` +
+      (p.sub ? `<div class="tp-sub">${escapeHtml(p.sub)}</div>` : "") +
+      `</div>`;
+  });
+  return out + "</div>";
+}
+
 function renderFinal(g: NormGame): void {
   const body = $("final-body");
   if (!body) return;
-  // No "X beat Y 17-7" headline — the scoreboard already says it.
+  // No "X beat Y 17-7" headline — the scoreboard already says it. No plays
+  // or drives either; the Plays tab owns those. Wrap = meta line, TOP
+  // PERFORMERS, highlights.
   let html = `<div class="wrap-meta">${escapeHtml(g.statusDetail || "Final")}` +
     `${g.venue?.fullName ? " · " + escapeHtml(String(g.venue.fullName)) : ""}</div>`;
-  // Scoring summary + highlights render below via the shared builders.
-  html += `<div id="final-scoring"></div><div class="clips-grid" id="final-clips"></div>`;
+  html += buildTopPerformers(g);
+  html += `<div class="clips-grid" id="final-clips"></div>`;
   body.innerHTML = html;
-  const fs = $("final-scoring");
-  if (fs) fs.innerHTML = buildScoringCards(true);
   void loadClipsInto("final-clips");
 }
 

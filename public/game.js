@@ -1495,14 +1495,93 @@ function renderPregame(g) {
   html += kvRow(escapeHtml(g.home.abbr), escapeHtml(g.home.record || "\u2014"));
   body.innerHTML = html;
 }
+var YDS_RE = /(\d+(?:\.\d+)?)\s*YDS/i;
+function leaderYards(top) {
+  const dv = String(top?.displayValue || "");
+  const m = dv.match(YDS_RE);
+  if (m) return parseFloat(m[1]);
+  const n = parseFloat(dv);
+  return isFinite(n) ? n : 0;
+}
+function gameLeaderFor(catName, g) {
+  const L = lastSummary?.leaders || [];
+  let best = null;
+  let bestVal = -1;
+  L.forEach((side) => {
+    const team = String(side?.team?.id) === g.home.id ? g.home : g.away;
+    (side?.leaders || []).forEach((cat) => {
+      if (String(cat?.name) !== catName) return;
+      const top = cat?.leaders?.[0];
+      if (!top) return;
+      const v = leaderYards(top);
+      if (v > bestVal) {
+        bestVal = v;
+        best = {
+          name: String(top.athlete?.shortName || top.athlete?.displayName || ""),
+          head: top.athlete?.headshot?.href ? String(top.athlete.headshot.href) : "",
+          big: String(Math.round(v)),
+          unit: "YDS",
+          sub: String(top.displayValue || ""),
+          team
+        };
+      }
+    });
+  });
+  return bestVal > 0 ? best : null;
+}
+function sackLeader(g) {
+  const bplayers = lastSummary?.boxscore?.players || [];
+  let best = null;
+  let bestVal = 0;
+  bplayers.forEach((side) => {
+    const team = String(side?.team?.id) === g.home.id ? g.home : g.away;
+    (side?.statistics || []).forEach((grp) => {
+      if (!/defens/i.test(String(grp?.name || grp?.text || ""))) return;
+      const labels = grp?.labels || [];
+      const idx = labels.findIndex((l) => /^SACKS?$/i.test(l));
+      if (idx < 0) return;
+      (grp?.athletes || []).forEach((row) => {
+        const v = parseFloat(String(row?.stats?.[idx] ?? "0")) || 0;
+        if (v > bestVal) {
+          bestVal = v;
+          best = {
+            name: String(row.athlete?.shortName || row.athlete?.displayName || ""),
+            head: row.athlete?.headshot?.href ? String(row.athlete.headshot.href) : "",
+            big: String(v),
+            unit: v === 1 ? "SACK" : "SACKS",
+            sub: "",
+            team
+          };
+        }
+      });
+    });
+  });
+  return bestVal > 0 ? best : null;
+}
+function buildTopPerformers(g) {
+  const cats = [
+    { label: "Passing", p: gameLeaderFor("passingYards", g) },
+    { label: "Rushing", p: gameLeaderFor("rushingYards", g) },
+    { label: "Receiving", p: gameLeaderFor("receivingYards", g) },
+    { label: "Sacks", p: sackLeader(g) }
+  ];
+  const cards = cats.filter((c) => c.p);
+  if (!cards.length) return "";
+  let out = `<div class="tp-hdr">TOP PERFORMERS</div><div class="tp-grid">`;
+  cards.forEach((c, i) => {
+    const p = c.p;
+    const color = railColorOf(p.team, p.team.id === g.home.id ? "#013369" : "#d50a0a");
+    out += `<div class="tp-card rise-in" style="--i:${i};--tc:${color}"><div class="tp-cat">${escapeHtml(c.label)}</div><div class="tp-row">` + (p.head ? `<img class="tp-head" loading="lazy" src="${escapeHtml(p.head)}" alt="" onerror="this.style.display='none'">` : "") + `<span class="tp-name">${escapeHtml(p.name)}</span></div><div class="tp-big">${escapeHtml(p.big)}<small>${escapeHtml(p.unit)}</small></div>` + (p.sub ? `<div class="tp-sub">${escapeHtml(p.sub)}</div>` : "") + `</div>`;
+  });
+  return out + "</div>";
+}
 function renderFinal(g) {
   const body = $("final-body");
   if (!body) return;
   let html = `<div class="wrap-meta">${escapeHtml(g.statusDetail || "Final")}${g.venue?.fullName ? " \xB7 " + escapeHtml(String(g.venue.fullName)) : ""}</div>`;
-  html += `<div id="final-scoring"></div><div class="clips-grid" id="final-clips"></div>`;
+  html += buildTopPerformers(g);
+  html += `<div class="clips-grid" id="final-clips"></div>`;
   body.innerHTML = html;
-  const fs = $("final-scoring");
-  if (fs) fs.innerHTML = buildScoringCards(true);
   void loadClipsInto("final-clips");
 }
 function renderPostponed(g) {
