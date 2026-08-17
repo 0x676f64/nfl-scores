@@ -615,11 +615,29 @@ function parseSituation(summary: any, g: NormGame): Situation | null {
     possTeamId = end.team?.id != null ? String(end.team.id) : "";
   }
 
-  // Possession truth: drives.current.team. Play end.team lies on admin plays
-  // (timeout carries the CALLER's team) — verified against real payloads.
+  // Possession truth: drives.current.team — EXCEPT after a change-of-
+  // possession play (punt/kick/INT/fumble), where end.team is the new owner.
+  // Admin plays still never own the ball (timeout carries the CALLER's team).
   const driveTeamId = summary?.drives?.current?.team?.id != null
     ? String(summary.drives.current.team.id) : "";
   if (driveTeamId) possTeamId = driveTeamId;
+  {
+    const drive0 = summary?.drives?.current;
+    const plays0: any[] = drive0?.plays || [];
+    for (let i = plays0.length - 1; i >= 0; i--) {
+      const p0 = plays0[i];
+      if (ADMIN_PLAY.test(String(p0?.type?.text || ""))) continue;
+      if (CHANGE_POSS.test(String(p0?.type?.text || ""))) {
+        const endId = p0?.end?.team?.id != null ? String(p0.end.team.id) : "";
+        if (endId && endId !== possTeamId && (endId === g.home.id || endId === g.away.id)) {
+          possTeamId = endId;
+        } else if (!endId && possTeamId) {
+          possTeamId = possTeamId === g.home.id ? g.away.id : g.home.id;
+        }
+      }
+      break;
+    }
+  }
   if (!possTeamId) {
     if (g.homePossession) possTeamId = g.home.id;
     else if (g.awayPossession) possTeamId = g.away.id;
@@ -853,6 +871,24 @@ function offenseOf(summary: any, g: NormGame): { team: NormTeam; isHome: boolean
   if (g.awayPossession) return { team: g.away, isHome: false };
   return null;
 }
+const CHANGE_POSS = /punt|kickoff|interception|fumble/i;
+
+// Who owns the ball AFTER the last real play. ESPN keeps the finished drive
+// as drives.current for a beat after a punt/kick/INT, so the drive team alone
+// shows the OLD possessor at the new spot — the end.team of a
+// change-of-possession play is the truth.
+function spotOwnerOf(summary: any, g: NormGame, off: { team: NormTeam; isHome: boolean }): { team: NormTeam; isHome: boolean } {
+  const { lastReal } = lastPlays(summary);
+  if (lastReal && CHANGE_POSS.test(playTypeText(lastReal))) {
+    const endId = lastReal?.end?.team?.id != null ? String(lastReal.end.team.id) : "";
+    if (endId === g.home.id && !off.isHome) return { team: g.home, isHome: true };
+    if (endId === g.away.id && off.isHome) return { team: g.away, isHome: false };
+    // No usable end.team: a completed kick/punt/INT still flips by definition.
+    if (!endId) return off.isHome ? { team: g.away, isHome: false } : { team: g.home, isHome: true };
+  }
+  return off;
+}
+
 function lastPlays(summary: any): { last: any | null; lastReal: any | null } {
   const drive = activeDrive(summary);
   const plays: any[] = drive?.plays || [];
@@ -927,7 +963,7 @@ function decomposePlay(p: any, off: { team: NormTeam; isHome: boolean }, g: Norm
     const pick = m ? spotToUnit(m[1]!, Number(m[2]), g) : null;
     const at = pick != null ? clampUnit(pick) : gm.x2;
     segs.push({ d: arcPath(gm.x1, at, false), len: segLen(gm.x1, at, true), kind: "arc", color: ink });
-    const dir = off.isHome ? -1 : 1; // offense's direction; return curls onward then heads back
+    const dir = off.isHome ? 1 : -1; // the RETURNER's direction — opposite the offense
     segs.push({ d: loopPath(at, dir), len: 18, kind: "loop", color: ink });
     if (Math.abs(gm.x2 - at) > 0.5) {
       segs.push({ d: laneLine(at, gm.x2, true), len: segLen(at, gm.x2, false), kind: "return", color: ink });
@@ -961,7 +997,10 @@ function decomposePlay(p: any, off: { team: NormTeam; isHome: boolean }, g: Norm
 
 // ── Renderer ──────────────────────────────────────────────────────────────
 
-const durOf = (len: number): number => Math.max(260, Math.min(1400, len * 4.5));
+// Football pacing: unhurried. Short runs still get a real draw (~700ms),
+// long bombs take about two seconds, and each segment breathes before the
+// next begins.
+const durOf = (len: number): number => Math.max(700, Math.min(2100, len * 7));
 
 function ballShape(): string {
   return `<ellipse rx="5" ry="3.2" fill="#7a4a26" stroke="#4c2f17" stroke-width="0.8"/>` +
@@ -1031,7 +1070,7 @@ function renderFieldViz(summary: any, g: NormGame, sit: Situation | null): void 
   let out = "";
   if (viz && viz.segs.length) {
     if (isNewPlay) {
-      let begin = 60;
+      let begin = 140;
       const mid = "fvm" + Date.now();
       let defs = "";
       viz.segs.forEach((seg, i) => {
@@ -1040,20 +1079,20 @@ function renderFieldViz(summary: any, g: NormGame, sit: Situation | null): void 
           `<path d="${seg.d}" fill="none" stroke="#fff" stroke-width="10" stroke-linecap="round"` +
           ` pathLength="100" stroke-dasharray="100" stroke-dashoffset="100">` +
           `<animate attributeName="stroke-dashoffset" from="100" to="0" dur="${dur}ms"` +
-          ` begin="${begin}ms" fill="freeze" calcMode="spline" keyTimes="0;1" keySplines="0.3 0 0.3 1"/>` +
+          ` begin="${begin}ms" fill="freeze" calcMode="spline" keyTimes="0;1" keySplines="0.25 0.1 0.25 1"/>` +
           `</path></mask>`;
         out += `<path d="${seg.d}" fill="none" stroke="${seg.color}" stroke-width="2.4"` +
           ` stroke-linecap="round" stroke-dasharray="6 5" mask="url(#${mid}-${i})"/>`;
         // ball rides every segment
-        out += `<g opacity="1"><animate attributeName="opacity" from="1" to="0" begin="${begin + dur + 160}ms" dur="280ms" fill="freeze"/>` +
-          `<g>${ballShape()}<animateMotion path="${seg.d}" begin="${begin}ms" dur="${dur}ms" fill="freeze" rotate="${seg.kind === "arc" ? "auto" : "0"}" calcMode="spline" keyTimes="0;1" keySplines="0.3 0 0.3 1"/></g></g>`;
-        begin += dur + 60;
+        out += `<g opacity="1"><animate attributeName="opacity" from="1" to="0" begin="${begin + dur + 240}ms" dur="380ms" fill="freeze"/>` +
+          `<g>${ballShape()}<animateMotion path="${seg.d}" begin="${begin}ms" dur="${dur}ms" fill="freeze" rotate="${seg.kind === "arc" ? "auto" : "0"}" calcMode="spline" keyTimes="0;1" keySplines="0.25 0.1 0.25 1"/></g></g>`;
+        begin += dur + 160;
       });
       chainMs = begin;
       if (viz.xMark != null) {
         const xm = xLane(viz.xMark);
         out = `<defs>${defs}</defs>` + out +
-          `<g opacity="0"><animate attributeName="opacity" from="0" to="1" begin="${chainMs - 40}ms" dur="200ms" fill="freeze"/>` +
+          `<g opacity="0"><animate attributeName="opacity" from="0" to="1" begin="${chainMs - 60}ms" dur="320ms" fill="freeze"/>` +
           `<path class="fv-x" d="M ${(xm - 4.5).toFixed(1)} ${FB.LANE - 4.5} L ${(xm + 4.5).toFixed(1)} ${FB.LANE + 4.5} M ${(xm + 4.5).toFixed(1)} ${FB.LANE - 4.5} L ${(xm - 4.5).toFixed(1)} ${FB.LANE + 4.5}"/></g>`;
       } else {
         out = `<defs>${defs}</defs>` + out;
@@ -1069,20 +1108,27 @@ function renderFieldViz(summary: any, g: NormGame, sit: Situation | null): void 
     }
   }
 
-  // direction arrow at the spot
+  // direction arrow at the spot — the NEW possessor's attack direction
+  const owner = spotOwnerOf(summary, g, off);
   if (spot != null) {
-    const d = off.isHome ? -1 : 1;
+    const d = owner.isHome ? -1 : 1;
     const hx = xLane(clampUnit(spot + d * 1.2));
     const arrow = `<path class="fv-arrow" d="M ${hx.toFixed(1)} ${FB.LANE - 5.5} L ${(hx + d * 10).toFixed(1)} ${FB.LANE} L ${hx.toFixed(1)} ${FB.LANE + 5.5} Z"/>`;
     out += isNewPlay
-      ? `<g opacity="0"><animate attributeName="opacity" from="0" to="1" begin="${Math.max(0, chainMs - 60)}ms" dur="220ms" fill="freeze"/>${arrow}</g>`
+      ? `<g opacity="0"><animate attributeName="opacity" from="0" to="1" begin="${Math.max(0, chainMs - 80)}ms" dur="340ms" fill="freeze"/>${arrow}</g>`
       : arrow;
   }
   playG.innerHTML = out;
+  if (isNewPlay) {
+    // SMIL begin times are absolute on the SVG's document timeline, which
+    // started when the field was built — without this reset, every animation
+    // is already "in the past" and renders instantly at its end state.
+    try { (svg as unknown as SVGSVGElement).setCurrentTime(0); } catch { /* older engines */ }
+  }
 
-  // pin directly above the arrow, in the same coordinate space
+  // pin directly above the arrow, in the same coordinate space — the OWNER's mark
   if (spot != null) {
-    pinG.innerHTML = pinMarkup(off.team, spot);
+    pinG.innerHTML = pinMarkup(owner.team, spot);
     pinG.style.display = "";
     if (isNewPlay) {
       pinG.classList.remove("anim-in");
@@ -1112,7 +1158,7 @@ function renderFieldViz(summary: any, g: NormGame, sit: Situation | null): void 
   // first-down line (slanted, gold)
   const dist = sit?.distance ?? numOrNull(lastReal?.end?.distance);
   if (spot != null && dist != null && dist > 0) {
-    const f = clampUnit(off.isHome ? spot - dist : spot + dist);
+    const f = clampUnit(owner.isHome ? spot - dist : spot + dist);
     first.setAttribute("x1", String(xT(f).toFixed(1)));
     first.setAttribute("y1", String(FB.T));
     first.setAttribute("x2", String(xB(f).toFixed(1)));

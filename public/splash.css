@@ -2520,7 +2520,7 @@ body.on-standings-tab .weather-strip { max-height: 0; opacity: 0; padding-top: 0
   0% { opacity: 0; transform: translateY(4px); }
   100% { opacity: 1; transform: translateY(0); }
 }
-#fv-pin.anim-in, #fv-chip.anim-in { opacity: 0; animation: fv-pop .4s var(--ease-out) both; }
+#fv-pin.anim-in, #fv-chip.anim-in { opacity: 0; animation: fv-pop .6s var(--ease-out) both; }
 @media (prefers-reduced-motion: reduce) {
   #fv-pin.anim-in, #fv-chip.anim-in { animation: none; opacity: 1; }
 }
@@ -2664,7 +2664,7 @@ body.is-pregame .linescore {
   font-family: var(--font-display); font-weight: 700; font-size: 13px;
   letter-spacing: .08em;
 }
-.play-banner.on { display: inline-flex; position: relative; left: 50%; transform: translateX(-50%); animation: banner-in .4s var(--ease-out) both; }
+.play-banner.on { display: inline-flex; position: relative; left: 50%; transform: translateX(-50%); animation: banner-in .55s var(--ease-out) both; }
 .play-banner.pen {
   background: rgba(230, 184, 0, 0.14); border: 1px solid rgba(230, 184, 0, 0.5);
   color: var(--penalty-yellow); font-family: var(--font-mono); font-size: 11px;
