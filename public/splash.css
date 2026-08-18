@@ -174,7 +174,7 @@ body.scorebug {
 /* Fixed-size zones — never grow, never shrink */
 .scorebug-header,
 .tab-bar {
-  background: var(--bg-card);
+  background: transparent;
   flex-shrink: 0;
 }
 
