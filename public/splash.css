@@ -162,17 +162,19 @@ body.scorebug {
   filter: none;
 }
 
-/* Pinned chrome — header sticks to the top, tab-bar to the bottom */
+/* Header scrolls WITH the content (only the tab-bar stays pinned) and is
+   transparent, so the shield watermark on #scorebug-content shows through it
+   instead of being masked by an opaque band. */
 .scorebug-header {
-  position: sticky;
-  top: 0;
+  position: relative;
   z-index: 20;
-  background: var(--bg-card);
+  background: transparent;
 }
 
 /* Fixed-size zones — never grow, never shrink */
 .scorebug-header,
 .tab-bar {
+  background: transparent;
   flex-shrink: 0;
 }
 
@@ -272,12 +274,21 @@ body.scorebug {
 }
 
 .team-logo {
-  width: 84px;
-  height: 84px;
+  /* Fluid: shrinks on narrow iPhones (was a fixed 84px, which overflowed the
+     score row and clipped), caps at the original size on roomy screens. */
+  width: clamp(46px, 17vw, 84px);
+  height: clamp(46px, 17vw, 84px);
   object-fit: contain;
   flex-shrink: 0;
   filter: drop-shadow(0 3px 8px rgba(0, 0, 0, 0.28));
 }
+.team-logo img, .team-logo .logo-lg, .team-logo .logo-md {
+  width: 100%; height: 100%; object-fit: contain; display: block;
+}
+/* Grid children default to min-width:auto, which refuses to shrink below the
+   logo's intrinsic size — the actual clipping mechanism on narrow screens. */
+.score-row > * { min-width: 0; }
+.score-row .team { min-width: 0; }
 
 .team-info {
   display: flex;
@@ -2713,7 +2724,7 @@ body.is-pregame .linescore {
 .ld-row { display: flex; align-items: center; gap: 6px; padding: 3px 0 3px 6px; border-left: 3px solid var(--tc, transparent); margin-left: -6px; border-radius: 2px; }
 .ld-row + .ld-row { margin-top: 4px; }
 .ld-head { width: 26px; height: 26px; border-radius: 50%; object-fit: cover; background: var(--bg-elev-2); flex: 0 0 auto; }
-.ld-head--empty { display: inline-block; }
+
 .ld-who { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .ld-name { font-size: 12px; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ld-team-logo { width: 13px; height: 13px; object-fit: contain; flex: 0 0 auto; }
@@ -2784,3 +2795,15 @@ body.is-pregame .linescore {
 .pick-btn:active { transform: scale(0.96); }
 
 .pick-diag { opacity: 0.6; font-size: 9.5px; }
+
+/* headshot placeholder — silhouette in a soft disc, themed via currentColor */
+.ph {
+  position: relative; display: inline-block; overflow: hidden;
+  background: var(--bg-elev-2); border-radius: 50%;
+}
+.ph::before {
+  content: ""; position: absolute; inset: 14% 14% 0;
+  background: var(--text-muted); opacity: 0.38;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='7.5' r='4.2'/%3E%3Cpath d='M3.5 24c0-4.7 3.8-8.5 8.5-8.5s8.5 3.8 8.5 8.5z'/%3E%3C/svg%3E") center bottom / contain no-repeat;
+          mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='7.5' r='4.2'/%3E%3Cpath d='M3.5 24c0-4.7 3.8-8.5 8.5-8.5s8.5 3.8 8.5 8.5z'/%3E%3C/svg%3E") center bottom / contain no-repeat;
+}

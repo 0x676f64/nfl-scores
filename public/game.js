@@ -561,6 +561,7 @@ function setupExpand() {
     const expanded = isExpandedMode();
     btn.style.display = expanded ? "none" : "flex";
     document.body.classList.toggle("is-inline", !expanded);
+    document.body.classList.toggle("is-expanded", expanded);
     scheduleInlinePagerSync();
     if (expanded && !modePoll) {
       modePoll = window.setInterval(sync, 400);
@@ -582,7 +583,12 @@ function setupExpand() {
     } catch (e) {
       reportError("requestExpandedMode", e);
     }
-    sync();
+    let tries = 0;
+    const settle = window.setInterval(() => {
+      tries++;
+      sync();
+      if (isExpandedMode() || tries > 20) window.clearInterval(settle);
+    }, 100);
   });
   host.appendChild(btn);
 }
@@ -826,6 +832,11 @@ var NFL_COLORS = {
   "34": "#03202f"
 };
 var blobCache = /* @__PURE__ */ new Map();
+function ghostSwap(img) {
+  const span = document.createElement("span");
+  span.className = `${img.className} ph`;
+  img.replaceWith(span);
+}
 async function loadProxiedInto(img, url) {
   const cached = blobCache.get(url);
   if (cached) {
@@ -835,7 +846,7 @@ async function loadProxiedInto(img, url) {
   try {
     const res = await fetch(url);
     if (!res.ok) {
-      img.style.display = "none";
+      ghostSwap(img);
       return;
     }
     const blob = await res.blob();
@@ -843,7 +854,7 @@ async function loadProxiedInto(img, url) {
     blobCache.set(url, obj);
     img.src = obj;
   } catch {
-    img.style.display = "none";
+    ghostSwap(img);
   }
 }
 function hydrateProxiedImages(root) {
@@ -1619,7 +1630,7 @@ function buildTopPerformers(g) {
   cards.forEach((c, i) => {
     const p = c.p;
     const color = railColorOf(p.team, p.team.id === g.home.id ? "#013369" : "#d50a0a");
-    out += `<div class="tp-card rise-in" style="--i:${i};--tc:${color}"><div class="tp-cat">${escapeHtml(c.label)}</div><div class="tp-row">` + (p.head ? `<img class="tp-head" data-psrc="${escapeHtml(p.head)}" alt="">` : "") + `<span class="tp-name">${escapeHtml(p.name)}</span></div><div class="tp-big">${escapeHtml(p.big)}<small>${escapeHtml(p.unit)}</small></div>` + (p.sub ? `<div class="tp-sub">${escapeHtml(p.sub)}</div>` : "") + `</div>`;
+    out += `<div class="tp-card rise-in" style="--i:${i};--tc:${color}"><div class="tp-cat">${escapeHtml(c.label)}</div><div class="tp-row">` + (p.head ? `<img class="tp-head" data-psrc="${escapeHtml(p.head)}" alt="">` : `<span class="tp-head ph"></span>`) + `<span class="tp-name">${escapeHtml(p.name)}</span></div><div class="tp-big">${escapeHtml(p.big)}<small>${escapeHtml(p.unit)}</small></div>` + (p.sub ? `<div class="tp-sub">${escapeHtml(p.sub)}</div>` : "") + `</div>`;
   });
   return out + "</div>";
 }
@@ -1723,7 +1734,7 @@ function buildLeaderCards(g) {
       if (!top) return "";
       const ath = top.athlete || {};
       const head = ath.headshot?.href ? proxied(String(ath.headshot.href)) : "";
-      return `<div class="ld-row" style="--tc:${color}">` + (head ? `<img class="ld-head" data-psrc="${escapeHtml(head)}" alt="">` : `<span class="ld-head ld-head--empty"></span>`) + `<span class="ld-who"><span class="ld-name">${escapeHtml(ath.shortName || ath.displayName || "")}</span><span class="ld-stat">${escapeHtml(String(top.displayValue || ""))}</span></span></div>`;
+      return `<div class="ld-row" style="--tc:${color}">` + (head ? `<img class="ld-head" data-psrc="${escapeHtml(head)}" alt="">` : `<span class="ld-head ph"></span>`) + `<span class="ld-who"><span class="ld-name">${escapeHtml(ath.shortName || ath.displayName || "")}</span><span class="ld-stat">${escapeHtml(String(top.displayValue || ""))}</span></span></div>`;
     };
     out += `<div class="ld-card${statsAnimate ? " rise-in" : ""}" style="--i:${i++}"><div class="ld-cat">${escapeHtml(label)}</div>` + row(pair.away, g.away, ac) + row(pair.home, g.home, hc) + `</div>`;
   });

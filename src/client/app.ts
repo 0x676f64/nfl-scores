@@ -271,6 +271,7 @@ function setupExpand(): void {
     const expanded = isExpandedMode();
     btn.style.display = expanded ? "none" : "flex";
     document.body.classList.toggle("is-inline", !expanded);
+    document.body.classList.toggle("is-expanded", expanded);
     scheduleInlinePagerSync();
     if (expanded && !modePoll) {
       modePoll = window.setInterval(sync, 400);
@@ -290,7 +291,15 @@ function setupExpand(): void {
     } catch (e) {
       reportError("requestExpandedMode", e);
     }
-    sync();
+    // The mode switch is asynchronous: calling sync() straight away reads the
+    // OLD mode, so the layout stayed in inline form until a second tap. Poll
+    // briefly until the platform reports expanded (or give up after ~2s).
+    let tries = 0;
+    const settle = window.setInterval(() => {
+      tries++;
+      sync();
+      if (isExpandedMode() || tries > 20) window.clearInterval(settle);
+    }, 100);
   });
 
   host.appendChild(btn);
@@ -503,17 +512,24 @@ const NFL_COLORS: Record<string, string> = {
 // fetch() to the app server, while a bare <img src="/api/..."> GET may not
 // be routed at all. Hydrate any <img data-psrc> after rendering.
 const blobCache = new Map<string, string>();
+// Replace a failed headshot with the ghost silhouette so the row keeps its
+// shape — a blank gap reads as a bug, a placeholder reads as "no photo".
+function ghostSwap(img: HTMLImageElement): void {
+  const span = document.createElement("span");
+  span.className = `${img.className} ph`;
+  img.replaceWith(span);
+}
 async function loadProxiedInto(img: HTMLImageElement, url: string): Promise<void> {
   const cached = blobCache.get(url);
   if (cached) { img.src = cached; return; }
   try {
     const res = await fetch(url);
-    if (!res.ok) { img.style.display = "none"; return; }
+    if (!res.ok) { ghostSwap(img); return; }
     const blob = await res.blob();
     const obj = URL.createObjectURL(blob);
     blobCache.set(url, obj);
     img.src = obj;
-  } catch { img.style.display = "none"; }
+  } catch { ghostSwap(img); }
 }
 function hydrateProxiedImages(root: ParentNode): void {
   root.querySelectorAll<HTMLImageElement>("img[data-psrc]").forEach((img) => {
@@ -1484,7 +1500,7 @@ function buildTopPerformers(g: NormGame): string {
     out += `<div class="tp-card rise-in" style="--i:${i};--tc:${color}">` +
       `<div class="tp-cat">${escapeHtml(c.label)}</div>` +
       `<div class="tp-row">` +
-      (p.head ? `<img class="tp-head" data-psrc="${escapeHtml(p.head)}" alt="">` : "") +
+      (p.head ? `<img class="tp-head" data-psrc="${escapeHtml(p.head)}" alt="">` : `<span class="tp-head ph"></span>`) +
       `<span class="tp-name">${escapeHtml(p.name)}</span></div>` +
       `<div class="tp-big">${escapeHtml(p.big)}<small>${escapeHtml(p.unit)}</small></div>` +
       (p.sub ? `<div class="tp-sub">${escapeHtml(p.sub)}</div>` : "") +
@@ -1609,7 +1625,7 @@ function buildLeaderCards(g: NormGame): string {
       const ath = top.athlete || {};
       const head = ath.headshot?.href ? proxied(String(ath.headshot.href)) : "";
       return `<div class="ld-row" style="--tc:${color}">` +
-        (head ? `<img class="ld-head" data-psrc="${escapeHtml(head)}" alt="">` : `<span class="ld-head ld-head--empty"></span>`) +
+        (head ? `<img class="ld-head" data-psrc="${escapeHtml(head)}" alt="">` : `<span class="ld-head ph"></span>`) +
         `<span class="ld-who"><span class="ld-name">${escapeHtml(ath.shortName || ath.displayName || "")}</span>` +
         `<span class="ld-stat">${escapeHtml(String(top.displayValue || ""))}</span></span></div>`;
     };
