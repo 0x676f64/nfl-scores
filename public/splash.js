@@ -450,7 +450,7 @@ function escapeHtml(s) {
 function logoHtml(team, sizeClass) {
   const badge = `<span class="logo-badge">${escapeHtml(team.abbr || "?")}</span>`;
   if (!team.id) return badge;
-  const local = `/teams/${encodeURIComponent(team.id)}.svg`;
+  const local = `/teams/${encodeURIComponent(team.id)}.png`;
   const cdn = escapeHtml(team.logo ? proxied(team.logo) : cdnLogo(team));
   const badgeAttr = badge.replace(/"/g, "&quot;");
   const onerr = cdn ? `if(!this.dataset.f){this.dataset.f=1;this.src='${cdn}';}else{this.outerHTML='${badgeAttr}';}` : `this.outerHTML='${badgeAttr}';`;
@@ -824,6 +824,49 @@ var NFL_COLORS = {
   "30": "#006778",
   "33": "#241773",
   "34": "#03202f"
+};
+var blobCache = /* @__PURE__ */ new Map();
+async function loadProxiedInto(img, url) {
+  const cached = blobCache.get(url);
+  if (cached) {
+    img.src = cached;
+    return;
+  }
+  try {
+    const res = await fetch(url);
+    if (!res.ok) {
+      img.style.display = "none";
+      return;
+    }
+    const blob = await res.blob();
+    const obj = URL.createObjectURL(blob);
+    blobCache.set(url, obj);
+    img.src = obj;
+  } catch {
+    img.style.display = "none";
+  }
+}
+function hydrateProxiedImages(root) {
+  root.querySelectorAll("img[data-psrc]").forEach((img) => {
+    const u = img.getAttribute("data-psrc");
+    img.removeAttribute("data-psrc");
+    if (u) void loadProxiedInto(img, u);
+  });
+}
+window.__logoFb = (img) => {
+  const step = Number(img.dataset.fb || "0");
+  const id = img.dataset.tid || "";
+  const abbr = img.dataset.tabbr || "";
+  img.dataset.fb = String(step + 1);
+  if (step === 0 && id) {
+    img.src = `/teams/${encodeURIComponent(id)}.svg`;
+    return;
+  }
+  if (step === 1 && abbr) {
+    void loadProxiedInto(img, `/api/img?u=${encodeURIComponent(`https://a.espncdn.com/i/teamlogos/nfl/500/${abbr.toLowerCase()}.png`)}`);
+    return;
+  }
+  img.style.display = "none";
 };
 function proxied(url) {
   const u = String(url || "").trim();
@@ -1230,9 +1273,9 @@ function ballShape() {
 }
 function pinMarkup(team, u) {
   const x = xLane(u).toFixed(1);
-  const local = `/teams/${encodeURIComponent(team.id)}.svg`;
+  const local = `/teams/${encodeURIComponent(team.id)}.png`;
   const T = FB.T;
-  return `<g transform="translate(${x} 0)"><path class="fv-pin-tail" d="M -5 ${T + 7} L 0 ${T + 18} L 5 ${T + 7} Z"/><circle class="fv-pin-bubble" cy="${T - 5}" r="13"/><text class="fv-pin-abbr" y="${T - 1.5}" text-anchor="middle">${escapeHtml(team.abbr)}</text><image href="${local}" x="-10" y="${T - 15}" width="20" height="20" preserveAspectRatio="xMidYMid meet" onerror="this.setAttribute('href','${cdnLogo(team)}')"/></g>`;
+  return `<g transform="translate(${x} 0)"><path class="fv-pin-tail" d="M -5 ${T + 7} L 0 ${T + 18} L 5 ${T + 7} Z"/><circle class="fv-pin-bubble" cy="${T - 5}" r="13"/><text class="fv-pin-abbr" y="${T - 1.5}" text-anchor="middle">${escapeHtml(team.abbr)}</text><image href="${local}" x="-10" y="${T - 15}" width="20" height="20" preserveAspectRatio="xMidYMid meet" onerror="this.remove()"/></g>`;
 }
 var lastAnimatedPlayId = "";
 function renderFieldViz(summary, g, sit) {
@@ -1576,7 +1619,7 @@ function buildTopPerformers(g) {
   cards.forEach((c, i) => {
     const p = c.p;
     const color = railColorOf(p.team, p.team.id === g.home.id ? "#013369" : "#d50a0a");
-    out += `<div class="tp-card rise-in" style="--i:${i};--tc:${color}"><div class="tp-cat">${escapeHtml(c.label)}</div><div class="tp-row">` + (p.head ? `<img class="tp-head" loading="lazy" src="${escapeHtml(p.head)}" alt="" onerror="this.style.display='none'">` : "") + `<span class="tp-name">${escapeHtml(p.name)}</span></div><div class="tp-big">${escapeHtml(p.big)}<small>${escapeHtml(p.unit)}</small></div>` + (p.sub ? `<div class="tp-sub">${escapeHtml(p.sub)}</div>` : "") + `</div>`;
+    out += `<div class="tp-card rise-in" style="--i:${i};--tc:${color}"><div class="tp-cat">${escapeHtml(c.label)}</div><div class="tp-row">` + (p.head ? `<img class="tp-head" data-psrc="${escapeHtml(p.head)}" alt="">` : "") + `<span class="tp-name">${escapeHtml(p.name)}</span></div><div class="tp-big">${escapeHtml(p.big)}<small>${escapeHtml(p.unit)}</small></div>` + (p.sub ? `<div class="tp-sub">${escapeHtml(p.sub)}</div>` : "") + `</div>`;
   });
   return out + "</div>";
 }
@@ -1587,6 +1630,7 @@ function renderFinal(g) {
   html += buildTopPerformers(g);
   html += `<div class="clips-grid" id="final-clips"></div>`;
   body.innerHTML = html;
+  hydrateProxiedImages(body);
   void loadClipsInto("final-clips");
 }
 function renderPostponed(g) {
@@ -1608,8 +1652,7 @@ function statNum(v) {
   return isFinite(n) ? n : null;
 }
 function logoImg(t, cls) {
-  const cdn = cdnLogo(t);
-  return `<img class="${cls}" src="/teams/${encodeURIComponent(t.id)}.svg" alt="${escapeHtml(t.abbr)}" onerror="if(!this.dataset.f){this.dataset.f=1;this.src='${cdn}';}else{this.style.display='none';}">`;
+  return `<img class="${cls}" src="/teams/${encodeURIComponent(t.id)}.png" alt="${escapeHtml(t.abbr)}" data-tid="${escapeHtml(t.id)}" data-tabbr="${escapeHtml(t.abbr)}" onerror="window.__logoFb(this)">`;
 }
 function buildTeamCompare(g) {
   const bteams = lastSummary?.boxscore?.teams || [];
@@ -1680,7 +1723,7 @@ function buildLeaderCards(g) {
       if (!top) return "";
       const ath = top.athlete || {};
       const head = ath.headshot?.href ? proxied(String(ath.headshot.href)) : "";
-      return `<div class="ld-row" style="--tc:${color}">` + (head ? `<img class="ld-head" loading="lazy" src="${escapeHtml(head)}" alt="" onerror="this.style.display='none'">` : `<span class="ld-head ld-head--empty"></span>`) + `<span class="ld-who"><span class="ld-name">${escapeHtml(ath.shortName || ath.displayName || "")}</span><span class="ld-stat">${escapeHtml(String(top.displayValue || ""))}</span></span></div>`;
+      return `<div class="ld-row" style="--tc:${color}">` + (head ? `<img class="ld-head" data-psrc="${escapeHtml(head)}" alt="">` : `<span class="ld-head ld-head--empty"></span>`) + `<span class="ld-who"><span class="ld-name">${escapeHtml(ath.shortName || ath.displayName || "")}</span><span class="ld-stat">${escapeHtml(String(top.displayValue || ""))}</span></span></div>`;
     };
     out += `<div class="ld-card${statsAnimate ? " rise-in" : ""}" style="--i:${i++}"><div class="ld-cat">${escapeHtml(label)}</div>` + row(pair.away, g.away, ac) + row(pair.home, g.home, hc) + `</div>`;
   });
@@ -1725,6 +1768,7 @@ function renderStatsTab() {
     html += `<div class="bs-team-tabs"><button class="bs-team-tab${statsBoxTeam === "away" ? " active" : ""}" data-bs-team="away" type="button"><span class="bs-team-tab-logo">${logoImg(g.away, "bs-team-tab-logo")}</span></button><button class="bs-team-tab${statsBoxTeam === "home" ? " active" : ""}" data-bs-team="home" type="button"><span class="bs-team-tab-logo">${logoImg(g.home, "bs-team-tab-logo")}</span></button></div><div class="bs-panel-wrap"><div class="bs-panel active">` + buildPlayerPanel(statsBoxTeam === "home" ? g.home.id : g.away.id) + `</div></div>`;
   }
   root.innerHTML = html;
+  hydrateProxiedImages(root);
   statsAnimate = false;
   root.querySelectorAll("#stats-toggle .plays-seg").forEach((seg) => {
     seg.addEventListener("click", () => {
@@ -1926,7 +1970,7 @@ async function loadClipsInto(containerId) {
   }
   el.className = "clips-grid";
   el.innerHTML = clips.slice(0, 8).map(
-    (c) => `<button class="clip-card" type="button" data-url="${escapeHtml(String(c.url || ""))}">` + (c.thumbnail ? `<img loading="lazy" src="${escapeHtml(proxied(String(c.thumbnail)))}" alt="" onerror="this.style.display='none'">` : "") + `<div class="chead">${escapeHtml(String(c.headline || "Highlight"))}</div></button>`
+    (c) => `<button class="clip-card" type="button" data-url="${escapeHtml(String(c.url || ""))}">` + (c.thumbnail ? `<img data-psrc="${escapeHtml(proxied(String(c.thumbnail)))}" alt="">` : "") + `<div class="chead">${escapeHtml(String(c.headline || "Highlight"))}</div></button>`
   ).join("");
   el.querySelectorAll(".clip-card[data-url]").forEach((card) => {
     card.addEventListener("click", () => {

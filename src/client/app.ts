@@ -128,7 +128,7 @@ function escapeHtml(s: string): string {
 function logoHtml(team: NormTeam, sizeClass: string): string {
   const badge = `<span class="logo-badge">${escapeHtml(team.abbr || "?")}</span>`;
   if (!team.id) return badge;
-  const local = `/teams/${encodeURIComponent(team.id)}.svg`;
+  const local = `/teams/${encodeURIComponent(team.id)}.png`;
   // Payload URL if present, else the deterministic CDN path — either way
   // there is ALWAYS a second source before the text badge.
   const cdn = escapeHtml(team.logo ? proxied(team.logo) : cdnLogo(team));
@@ -499,6 +499,44 @@ const NFL_COLORS: Record<string, string> = {
 // Reddit's webview only loads same-origin assets, so every remote image is
 // routed through the server's allowlisted /api/img proxy. In a plain browser
 // this works identically (the replay server implements the same endpoint).
+// Proxied images are loaded via fetch -> blob because the webview routes
+// fetch() to the app server, while a bare <img src="/api/..."> GET may not
+// be routed at all. Hydrate any <img data-psrc> after rendering.
+const blobCache = new Map<string, string>();
+async function loadProxiedInto(img: HTMLImageElement, url: string): Promise<void> {
+  const cached = blobCache.get(url);
+  if (cached) { img.src = cached; return; }
+  try {
+    const res = await fetch(url);
+    if (!res.ok) { img.style.display = "none"; return; }
+    const blob = await res.blob();
+    const obj = URL.createObjectURL(blob);
+    blobCache.set(url, obj);
+    img.src = obj;
+  } catch { img.style.display = "none"; }
+}
+function hydrateProxiedImages(root: ParentNode): void {
+  root.querySelectorAll<HTMLImageElement>("img[data-psrc]").forEach((img) => {
+    const u = img.getAttribute("data-psrc");
+    img.removeAttribute("data-psrc");
+    if (u) void loadProxiedInto(img, u);
+  });
+}
+// Logo fallback stepper: local svg -> local png -> proxied CDN blob -> hide
+// (an abbr badge behind, where present, then shows through).
+(window as any).__logoFb = (img: HTMLImageElement): void => {
+  const step = Number(img.dataset.fb || "0");
+  const id = img.dataset.tid || "";
+  const abbr = img.dataset.tabbr || "";
+  img.dataset.fb = String(step + 1);
+  if (step === 0 && id) { img.src = `/teams/${encodeURIComponent(id)}.svg`; return; }
+  if (step === 1 && abbr) {
+    void loadProxiedInto(img, `/api/img?u=${encodeURIComponent(`https://a.espncdn.com/i/teamlogos/nfl/500/${abbr.toLowerCase()}.png`)}`);
+    return;
+  }
+  img.style.display = "none";
+};
+
 function proxied(url: string): string {
   const u = String(url || "").trim();
   if (!u || !/^https:\/\//i.test(u)) return u;
@@ -1030,14 +1068,14 @@ function ballShape(): string {
 
 function pinMarkup(team: NormTeam, u: number): string {
   const x = xLane(u).toFixed(1);
-  const local = `/teams/${encodeURIComponent(team.id)}.svg`;
+  const local = `/teams/${encodeURIComponent(team.id)}.png`;
   const T = FB.T;
   return `<g transform="translate(${x} 0)">` +
     `<path class="fv-pin-tail" d="M -5 ${T + 7} L 0 ${T + 18} L 5 ${T + 7} Z"/>` +
     `<circle class="fv-pin-bubble" cy="${T - 5}" r="13"/>` +
     `<text class="fv-pin-abbr" y="${T - 1.5}" text-anchor="middle">${escapeHtml(team.abbr)}</text>` +
     `<image href="${local}" x="-10" y="${T - 15}" width="20" height="20" preserveAspectRatio="xMidYMid meet"` +
-    ` onerror="this.setAttribute('href','${cdnLogo(team)}')"/>` +
+    ` onerror="this.remove()"/>` +
     `</g>`;
 }
 
@@ -1446,7 +1484,7 @@ function buildTopPerformers(g: NormGame): string {
     out += `<div class="tp-card rise-in" style="--i:${i};--tc:${color}">` +
       `<div class="tp-cat">${escapeHtml(c.label)}</div>` +
       `<div class="tp-row">` +
-      (p.head ? `<img class="tp-head" loading="lazy" src="${escapeHtml(p.head)}" alt="" onerror="this.style.display='none'">` : "") +
+      (p.head ? `<img class="tp-head" data-psrc="${escapeHtml(p.head)}" alt="">` : "") +
       `<span class="tp-name">${escapeHtml(p.name)}</span></div>` +
       `<div class="tp-big">${escapeHtml(p.big)}<small>${escapeHtml(p.unit)}</small></div>` +
       (p.sub ? `<div class="tp-sub">${escapeHtml(p.sub)}</div>` : "") +
@@ -1466,6 +1504,7 @@ function renderFinal(g: NormGame): void {
   html += buildTopPerformers(g);
   html += `<div class="clips-grid" id="final-clips"></div>`;
   body.innerHTML = html;
+  hydrateProxiedImages(body);
   void loadClipsInto("final-clips");
 }
 
@@ -1498,9 +1537,8 @@ function statNum(v: string): number | null {
 }
 
 function logoImg(t: NormTeam, cls: string): string {
-  const cdn = cdnLogo(t);
-  return `<img class="${cls}" src="/teams/${encodeURIComponent(t.id)}.svg" alt="${escapeHtml(t.abbr)}"` +
-    ` onerror="if(!this.dataset.f){this.dataset.f=1;this.src='${cdn}';}else{this.style.display='none';}">`;
+  return `<img class="${cls}" src="/teams/${encodeURIComponent(t.id)}.png" alt="${escapeHtml(t.abbr)}"` +
+    ` data-tid="${escapeHtml(t.id)}" data-tabbr="${escapeHtml(t.abbr)}" onerror="window.__logoFb(this)">`;
 }
 
 function buildTeamCompare(g: NormGame): string {
@@ -1571,7 +1609,7 @@ function buildLeaderCards(g: NormGame): string {
       const ath = top.athlete || {};
       const head = ath.headshot?.href ? proxied(String(ath.headshot.href)) : "";
       return `<div class="ld-row" style="--tc:${color}">` +
-        (head ? `<img class="ld-head" loading="lazy" src="${escapeHtml(head)}" alt="" onerror="this.style.display='none'">` : `<span class="ld-head ld-head--empty"></span>`) +
+        (head ? `<img class="ld-head" data-psrc="${escapeHtml(head)}" alt="">` : `<span class="ld-head ld-head--empty"></span>`) +
         `<span class="ld-who"><span class="ld-name">${escapeHtml(ath.shortName || ath.displayName || "")}</span>` +
         `<span class="ld-stat">${escapeHtml(String(top.displayValue || ""))}</span></span></div>`;
     };
@@ -1628,6 +1666,7 @@ function renderStatsTab(): void {
       buildPlayerPanel(statsBoxTeam === "home" ? g.home.id : g.away.id) + `</div></div>`;
   }
   root.innerHTML = html;
+  hydrateProxiedImages(root);
   statsAnimate = false; // consumed
 
   root.querySelectorAll<HTMLElement>("#stats-toggle .plays-seg").forEach((seg) => {
@@ -1860,7 +1899,7 @@ async function loadClipsInto(containerId: string): Promise<void> {
   el.className = "clips-grid";
   el.innerHTML = clips.slice(0, 8).map((c: any) =>
     `<button class="clip-card" type="button" data-url="${escapeHtml(String(c.url || ""))}">` +
-    (c.thumbnail ? `<img loading="lazy" src="${escapeHtml(proxied(String(c.thumbnail)))}" alt="" onerror="this.style.display='none'">` : "") +
+    (c.thumbnail ? `<img data-psrc="${escapeHtml(proxied(String(c.thumbnail)))}" alt="">` : "") +
     `<div class="chead">${escapeHtml(String(c.headline || "Highlight"))}</div></button>`
   ).join("");
   el.querySelectorAll<HTMLElement>(".clip-card[data-url]").forEach((card) => {
@@ -2033,34 +2072,8 @@ async function renderWinProb(): Promise<void> {
   wireWinProbHover(g.away.abbr, g.home.abbr, awayColor, homeColor);
 }
 
-function wireWinProbHover(awayAbbr: string, homeAbbr: string, awayColor: string, homeColor: string): void {
-  const chart = document.querySelector(".wp-chart") as SVGElement | null;
-  const tooltip = $("wp-tooltip");
-  const dot = document.getElementById("wp-dot");
-  if (!chart || !tooltip || !dot) return;
-
-  const showFor = (z: SVGElement): void => {
-    const ds = (z as unknown as HTMLElement).dataset;
-    dot.setAttribute("cx", ds.x || "0");
-    dot.setAttribute("cy", ds.y || "0");
-    (dot as unknown as HTMLElement).style.display = "block";
-    tooltip.innerHTML = `
-      ${ds.inn ? `<div class="wp-tt-inn">${ds.inn}</div>` : ""}
-      ${ds.desc ? `<div class="wp-tt-desc">${ds.desc}</div>` : ""}
-      <div class="wp-tt-probs"><span style="color:${awayColor}">${awayAbbr} ${ds.away}%</span><span style="color:${homeColor}">${homeAbbr} ${ds.home}%</span></div>`;
-    tooltip.style.display = "block";
-  };
-
-  const hide = (): void => {
-    tooltip.style.display = "none";
-    (dot as unknown as HTMLElement).style.display = "none";
-  };
-
-  chart.querySelectorAll(".wp-zone").forEach((zone) => {
-    const z = zone as SVGElement;
-    z.addEventListener("mouseenter", () => showFor(z));
-    z.addEventListener("mouseleave", hide);
-    z.addEventListener("click", (e: Event) => {
+.
++69
       e.stopPropagation();
       showFor(z);
     });
@@ -2093,7 +2106,7 @@ async function fetchStandingsData(): Promise<any> {
   if (standCache && now - standCacheTs < 120000) return standCache;
   const res = await fetch("/api/standings");
   if (!res.ok) throw new Error("standings fetch failed");
-  const data = await res.json();
+  c77onst data = await res.json();
   standCache = data; standCacheTs = now;
   return data;
 }
@@ -2126,7 +2139,9 @@ function statOf(entry: any, names: string[]): string {
 
 async function loadStandingsView(): Promise<void> {
   const body = $("stand-body");
-  if (!body) return;
+  if 8*---*-**********************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************88888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888899999999999999999999999999999999999++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++*-------------------------------------------------------------------------------------------------------3
+  -
+  3---3333333(!body) return;
   body.innerHTML = '<div class="stand-msg">Loading…</div>';
   try {
     const data = await fetchStandingsData();
