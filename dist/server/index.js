@@ -7,6 +7,10 @@ var __hasOwnProp = Object.prototype.hasOwnProperty;
 var __commonJS = (cb, mod) => function __require() {
   return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
 };
+var __export = (target, all) => {
+  for (var name in all)
+    __defProp(target, name, { get: all[name], enumerable: true });
+};
 var __copyProps = (to, from, except, desc) => {
   if (from && typeof from === "object" || typeof from === "function") {
     for (let key of __getOwnPropNames(from))
@@ -23,6 +27,7 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
   isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
   mod
 ));
+var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
 // node_modules/@protobufjs/aspromise/index.js
 var require_aspromise = __commonJS({
@@ -2430,6 +2435,14 @@ var require_minimal2 = __commonJS({
     module2.exports = require_index_minimal();
   }
 });
+
+// src/server/index.ts
+var index_exports = {};
+__export(index_exports, {
+  serverOnRequest: () => serverOnRequest
+});
+module.exports = __toCommonJS(index_exports);
+var import_node_events = require("node:events");
 
 // node_modules/@devvit/protos/json/devvit/plugin/redis/redisapi.js
 var RedisKeyScope;
@@ -92177,8 +92190,41 @@ function flattenFormFieldValue(value) {
 // node_modules/@devvit/settings/index.js
 var settings = new SettingsClient();
 
-// src/server/server.ts
-var import_node_events = require("node:events");
+// src/server/index.ts
+var TEAM_NAMES = {
+  "1": "Atlanta Falcons",
+  "2": "Buffalo Bills",
+  "3": "Chicago Bears",
+  "4": "Cincinnati Bengals",
+  "5": "Cleveland Browns",
+  "6": "Dallas Cowboys",
+  "7": "Denver Broncos",
+  "8": "Detroit Lions",
+  "9": "Green Bay Packers",
+  "10": "Tennessee Titans",
+  "11": "Indianapolis Colts",
+  "12": "Kansas City Chiefs",
+  "13": "Las Vegas Raiders",
+  "14": "Los Angeles Rams",
+  "15": "Miami Dolphins",
+  "16": "Minnesota Vikings",
+  "17": "New England Patriots",
+  "18": "New Orleans Saints",
+  "19": "New York Giants",
+  "20": "New York Jets",
+  "21": "Philadelphia Eagles",
+  "22": "Arizona Cardinals",
+  "23": "Pittsburgh Steelers",
+  "24": "Los Angeles Chargers",
+  "25": "San Francisco 49ers",
+  "26": "Seattle Seahawks",
+  "27": "Tampa Bay Buccaneers",
+  "28": "Washington Commanders",
+  "29": "Carolina Panthers",
+  "30": "Jacksonville Jaguars",
+  "33": "Baltimore Ravens",
+  "34": "Houston Texans"
+};
 var ESPN_BASE = "https://site.api.espn.com/apis/site/v2/sports/football/nfl";
 var ESPN_STANDINGS_URL = "https://site.api.espn.com/apis/v2/sports/football/nfl/standings";
 function dedupExpiresAt() {
@@ -92222,6 +92268,10 @@ async function onRequest(req, rsp) {
   }
   if (pathname.startsWith("/api/clips/")) {
     await onClips(pathname.slice("/api/clips/".length), rsp);
+    return;
+  }
+  if (pathname === "/api/img") {
+    await onImage(urlObj, rsp);
     return;
   }
   if (pathname === "/api/standings") {
@@ -92367,9 +92417,11 @@ async function onSchedule(urlObj, rsp) {
     return;
   }
   const espnDate = date.replaceAll("-", "");
+  const st = urlObj.searchParams.get("st");
+  const stOk = st === "1" || st === "2" || st === "3" ? st : null;
   await proxyEspnJsonCached(
-    `nflcache:sched:${date}`,
-    `${ESPN_BASE}/scoreboard?dates=${espnDate}`,
+    `nflcache:sched:${date}${stOk ? `:st${stOk}` : ""}`,
+    `${ESPN_BASE}/scoreboard?dates=${espnDate}${stOk ? `&seasontype=${stOk}` : ""}`,
     SCHEDULE_CACHE_TTL_S,
     rsp
   );
@@ -92517,6 +92569,50 @@ function bestVideoUrl(item) {
     if (typeof href === "string" && href) return href;
   }
   return typeof source?.href === "string" && source.href ? source.href : null;
+}
+var IMG_HOSTS = [
+  "a.espncdn.com",
+  "espnmedia-cdn.akamaized.net",
+  "media.video-cdn.espn.com"
+];
+var IMG_TYPES = /* @__PURE__ */ new Set(["image/png", "image/jpeg", "image/webp", "image/gif", "image/svg+xml"]);
+var IMG_CACHE_S = 60 * 60 * 24;
+async function onImage(urlObj, rsp) {
+  const raw = urlObj.searchParams.get("u") || "";
+  let target;
+  try {
+    target = new URL(raw);
+  } catch {
+    writeJSON(400, { error: "bad url", status: 400 }, rsp);
+    return;
+  }
+  const hostOk = target.protocol === "https:" && IMG_HOSTS.some((h) => target.hostname === h || target.hostname.endsWith("." + h));
+  if (!hostOk) {
+    writeJSON(403, { error: "host not allowed", status: 403 }, rsp);
+    return;
+  }
+  try {
+    const res = await fetch(target.toString());
+    if (!res.ok) {
+      writeJSON(502, { error: `upstream ${res.status}`, status: 502 }, rsp);
+      return;
+    }
+    const type = String(res.headers.get("content-type") || "").split(";")[0].trim().toLowerCase();
+    if (!IMG_TYPES.has(type)) {
+      writeJSON(415, { error: "not an image", status: 415 }, rsp);
+      return;
+    }
+    const buf = Buffer.from(await res.arrayBuffer());
+    rsp.writeHead(200, {
+      "Content-Type": type,
+      "Content-Length": buf.byteLength,
+      "Cache-Control": `public, max-age=${IMG_CACHE_S}`
+    });
+    rsp.end(buf);
+  } catch (err) {
+    console.error("image proxy failed:", err);
+    writeJSON(502, { error: "fetch failed", status: 502 }, rsp);
+  }
 }
 async function onClips(eventId, rsp) {
   if (!/^\d+$/.test(eventId)) {
@@ -92872,6 +92968,72 @@ async function handlePostgameOrPostponement(g, subredditId, teamId, customTitles
     return "failed";
   }
 }
+async function recoverPostMapping(postId) {
+  let title = "";
+  let createdMs = null;
+  try {
+    const fullId = postId.startsWith("t3_") ? postId : `t3_${postId}`;
+    const post = await reddit.getPostById(fullId);
+    title = String(post?.title || "");
+    const created = post?.createdAt ? new Date(post.createdAt) : null;
+    if (created && !isNaN(created.getTime())) createdMs = created.getTime();
+  } catch (e) {
+    console.error("recover: post lookup failed:", e);
+    return null;
+  }
+  if (!title) {
+    console.error("recover: post has no title");
+    return null;
+  }
+  const hits = [];
+  for (const [id, name] of Object.entries(TEAM_NAMES)) {
+    if (title.includes(name)) hits.push(id);
+  }
+  console.log(`recover: title=${JSON.stringify(title)} teams=${JSON.stringify(hits)} createdAt=${createdMs ? new Date(createdMs).toISOString() : "unknown"}`);
+  if (hits.length === 0) return null;
+  const postType = /postponed/i.test(title) ? "postponed" : /post.?game|final/i.test(title) ? "postgame" : "game";
+  const dayMs = 24 * 60 * 60 * 1e3;
+  const offsets = createdMs != null ? [0, -1, 1, -2, 2, -3, 3] : [0, -1, -2, -3, -4, -5, -6, -7, -8, -9];
+  const base = createdMs ?? Date.now();
+  const dates = offsets.map(
+    (off) => new Date(base + off * dayMs).toLocaleDateString("sv-SE", { timeZone: "America/New_York" })
+  );
+  for (const date of dates) {
+    const espnDate = date.replaceAll("-", "");
+    const urls = [
+      `${ESPN_BASE}/scoreboard?dates=${espnDate}`,
+      `${ESPN_BASE}/scoreboard?dates=${espnDate}&seasontype=1`,
+      `${ESPN_BASE}/scoreboard?dates=${espnDate}&seasontype=3`
+    ];
+    for (let i = 0; i < urls.length; i++) {
+      let data = null;
+      try {
+        data = await fetchEspnJsonCached(
+          `nflcache:sched:${date}${i ? `:st${i === 1 ? 1 : 3}` : ""}`,
+          urls[i],
+          SCHEDULE_CACHE_TTL_S
+        );
+      } catch (e) {
+        console.error(`recover: fetch failed ${date} st=${i}:`, e);
+        continue;
+      }
+      const events = data?.events ?? [];
+      if (!events.length) continue;
+      for (const ev of events) {
+        const g = normalizeScoreboardEvent(ev);
+        if (!g) continue;
+        const ids = [g.home.id, g.away.id];
+        const matched = hits.filter((h) => ids.includes(h));
+        if (matched.length >= Math.min(2, hits.length)) {
+          console.log(`recover: matched event ${g.eventId} on ${date} (st=${i}) for post ${postId}`);
+          return { eventId: g.eventId, postType };
+        }
+      }
+    }
+  }
+  console.error(`recover: no matching game found for ${JSON.stringify(title)} across ${dates[0]}..${dates[dates.length - 1]}`);
+  return null;
+}
 async function onPostGame(rsp) {
   if (!context.postId) {
     writeJSON(200, { eventId: null, postType: null }, rsp);
@@ -92880,9 +93042,32 @@ async function onPostGame(rsp) {
   try {
     const val = await redis.get(`post-game:${context.postId}`);
     const postType = await redis.get(`post-type:${context.postId}`);
+    if (val) {
+      writeJSON(
+        200,
+        { eventId: val, postType: postType || null },
+        rsp
+      );
+      return;
+    }
+    const rec = await recoverPostMapping(context.postId);
+    if (rec) {
+      try {
+        await redis.set(`post-game:${context.postId}`, rec.eventId, { expiration: renderExpiresAt() });
+        await redis.set(`post-type:${context.postId}`, rec.postType, { expiration: renderExpiresAt() });
+      } catch (e) {
+        console.error("recoverPostMapping: re-store failed:", e);
+      }
+      writeJSON(
+        200,
+        { eventId: rec.eventId, postType: rec.postType, recovered: true },
+        rsp
+      );
+      return;
+    }
     writeJSON(
       200,
-      { eventId: val || null, postType: postType || null },
+      { eventId: null, postType: null, recoveryFailed: true },
       rsp
     );
   } catch (e) {
@@ -93225,12 +93410,13 @@ async function onModAction(req) {
   }
   return {};
 }
-
-// src/server/index.ts
 var server = createServer(serverOnRequest);
-var port = getServerPort();
 server.on("error", (err) => console.error(`server error; ${err.stack}`));
-server.listen(port);
+server.listen(getServerPort());
+// Annotate the CommonJS export names for ESM import in node:
+0 && (module.exports = {
+  serverOnRequest
+});
 /*! Bundled license information:
 
 long/umd/index.js:

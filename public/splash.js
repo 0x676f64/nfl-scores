@@ -451,7 +451,7 @@ function logoHtml(team, sizeClass) {
   const badge = `<span class="logo-badge">${escapeHtml(team.abbr || "?")}</span>`;
   if (!team.id) return badge;
   const local = `/teams/${encodeURIComponent(team.id)}.svg`;
-  const cdn = escapeHtml(team.logo || cdnLogo(team));
+  const cdn = escapeHtml(team.logo ? proxied(team.logo) : cdnLogo(team));
   const badgeAttr = badge.replace(/"/g, "&quot;");
   const onerr = cdn ? `if(!this.dataset.f){this.dataset.f=1;this.src='${cdn}';}else{this.outerHTML='${badgeAttr}';}` : `this.outerHTML='${badgeAttr}';`;
   return `<img class="${sizeClass}" src="${local}" alt="${escapeHtml(team.abbr)}" onerror="${onerr}">`;
@@ -669,7 +669,7 @@ var OVERLAY_CLOSE_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentCo
 var infoOverlayEl = null;
 function overlayRowsHtml(items) {
   return items.map((it, i) => {
-    const visual = it.img ? `<img class="info-row-logo" src="${it.img}" alt="">` : it.icon ? `<span class="info-row-icon">${it.icon}</span>` : "";
+    const visual = it.img ? `<img class="info-row-logo" src="${proxied(it.img)}" alt="">` : it.icon ? `<span class="info-row-icon">${it.icon}</span>` : "";
     const inner = visual + '<span class="info-row-text"><span class="info-row-label">' + it.label + "</span>" + (it.sub ? '<span class="info-row-sub">' + it.sub + "</span>" : "") + "</span>";
     const style = `animation-delay:${50 + i * 55}ms`;
     return it.url ? `<button class="info-row" type="button" data-url="${it.url}" style="${style}">${inner}</button>` : `<div class="info-row is-static" style="${style}">${inner}</div>`;
@@ -825,8 +825,13 @@ var NFL_COLORS = {
   "33": "#241773",
   "34": "#03202f"
 };
+function proxied(url) {
+  const u = String(url || "").trim();
+  if (!u || !/^https:\/\//i.test(u)) return u;
+  return `/api/img?u=${encodeURIComponent(u)}`;
+}
 function cdnLogo(t) {
-  return `https://a.espncdn.com/i/teamlogos/nfl/500/${encodeURIComponent(t.abbr.toLowerCase())}.png`;
+  return proxied(`https://a.espncdn.com/i/teamlogos/nfl/500/${encodeURIComponent(t.abbr.toLowerCase())}.png`);
 }
 var TEAM_COLORS_DUAL = {};
 function railColorOf(t, fallback) {
@@ -1518,7 +1523,7 @@ function gameLeaderFor(catName, g) {
         bestVal = v;
         best = {
           name: String(top.athlete?.shortName || top.athlete?.displayName || ""),
-          head: top.athlete?.headshot?.href ? String(top.athlete.headshot.href) : "",
+          head: top.athlete?.headshot?.href ? proxied(String(top.athlete.headshot.href)) : "",
           big: String(Math.round(v)),
           unit: "YDS",
           sub: String(top.displayValue || ""),
@@ -1546,7 +1551,7 @@ function sackLeader(g) {
           bestVal = v;
           best = {
             name: String(row.athlete?.shortName || row.athlete?.displayName || ""),
-            head: row.athlete?.headshot?.href ? String(row.athlete.headshot.href) : "",
+            head: row.athlete?.headshot?.href ? proxied(String(row.athlete.headshot.href)) : "",
             big: String(v),
             unit: v === 1 ? "SACK" : "SACKS",
             sub: "",
@@ -1674,7 +1679,7 @@ function buildLeaderCards(g) {
     const row = (top, _team, color) => {
       if (!top) return "";
       const ath = top.athlete || {};
-      const head = ath.headshot?.href ? String(ath.headshot.href) : "";
+      const head = ath.headshot?.href ? proxied(String(ath.headshot.href)) : "";
       return `<div class="ld-row" style="--tc:${color}">` + (head ? `<img class="ld-head" loading="lazy" src="${escapeHtml(head)}" alt="" onerror="this.style.display='none'">` : `<span class="ld-head ld-head--empty"></span>`) + `<span class="ld-who"><span class="ld-name">${escapeHtml(ath.shortName || ath.displayName || "")}</span><span class="ld-stat">${escapeHtml(String(top.displayValue || ""))}</span></span></div>`;
     };
     out += `<div class="ld-card${statsAnimate ? " rise-in" : ""}" style="--i:${i++}"><div class="ld-cat">${escapeHtml(label)}</div>` + row(pair.away, g.away, ac) + row(pair.home, g.home, hc) + `</div>`;
@@ -1921,7 +1926,7 @@ async function loadClipsInto(containerId) {
   }
   el.className = "clips-grid";
   el.innerHTML = clips.slice(0, 8).map(
-    (c) => `<button class="clip-card" type="button" data-url="${escapeHtml(String(c.url || ""))}">` + (c.thumbnail ? `<img loading="lazy" src="${escapeHtml(String(c.thumbnail))}" alt="">` : "") + `<div class="chead">${escapeHtml(String(c.headline || "Highlight"))}</div></button>`
+    (c) => `<button class="clip-card" type="button" data-url="${escapeHtml(String(c.url || ""))}">` + (c.thumbnail ? `<img loading="lazy" src="${escapeHtml(proxied(String(c.thumbnail)))}" alt="" onerror="this.style.display='none'">` : "") + `<div class="chead">${escapeHtml(String(c.headline || "Highlight"))}</div></button>`
   ).join("");
   el.querySelectorAll(".clip-card[data-url]").forEach((card) => {
     card.addEventListener("click", () => {
@@ -2436,10 +2441,83 @@ function renderEndedState() {
   if (!host) return;
   host.innerHTML = `
     <div class="ended-display">
-      <div class="ended-headline">Thread Ended</div>
+      <div class="ended-headline">Scoreboard Unavailable</div>
       <div class="ended-divider"></div>
-      <div class="ended-text">This game thread is no longer live. Live scoreboards appear here only while a game is in progress.</div>
+      <div class="ended-text">This thread isn't linked to a game yet.</div>
+      <div id="pick-game" class="pick-wrap"></div>
     </div>`;
+  void offerGamePicker();
+}
+async function offerGamePicker() {
+  const box = $("pick-game");
+  if (!box) return;
+  const days = [];
+  for (let i = 0; i < 8; i++) {
+    const d = new Date(Date.now() - i * 864e5);
+    days.push(d.toISOString().slice(0, 10));
+  }
+  const found = [];
+  const diag = [];
+  for (const day of days) {
+    if (found.length >= 12) break;
+    for (const st of ["", "1", "3"]) {
+      let events = [];
+      try {
+        const res = await fetch(`/api/schedule?date=${day}${st ? `&st=${st}` : ""}`);
+        if (!res.ok) {
+          let why = "";
+          try {
+            const body = await res.text();
+            try {
+              why = String(JSON.parse(body)?.error || "").slice(0, 140);
+            } catch {
+              why = body.slice(0, 140);
+            }
+          } catch {
+          }
+          if (diag.length < 2) diag.push(`HTTP ${res.status}${why ? `: ${why}` : ""}`);
+          continue;
+        }
+        const data = await res.json();
+        events = data?.events || [];
+      } catch (e) {
+        if (diag.length < 3) diag.push(`${day.slice(5)}: fetch threw`);
+        continue;
+      }
+      if (events.length) console.log(`schedule ${day} st=${st || "-"}: ${events.length} events`);
+      for (const ev of events) {
+        const comp = ev?.competitions?.[0];
+        const cs = comp?.competitors || [];
+        const h = cs.find((c) => c?.homeAway === "home")?.team?.abbreviation || "";
+        const a = cs.find((c) => c?.homeAway === "away")?.team?.abbreviation || "";
+        if (!h || !a) continue;
+        if (!found.some((f) => f.id === String(ev.id))) {
+          found.push({ id: String(ev.id), label: `${a} @ ${h} \xB7 ${day.slice(5)}` });
+        }
+      }
+      if (events.length) break;
+    }
+  }
+  if (!found.length) {
+    const why = diag.length ? diag.join(" \xB7 ") : "all slates came back empty";
+    box.innerHTML = `<div class="pick-note">No recent games found to link.</div><div class="pick-note pick-diag">(${escapeHtml(why)})</div>`;
+    return;
+  }
+  box.innerHTML = '<div class="pick-note">Pick the game this thread is for:</div>' + found.slice(0, 12).map(
+    (f) => `<button class="pick-btn" type="button" data-ev="${escapeHtml(f.id)}">${escapeHtml(f.label)}</button>`
+  ).join("");
+  box.querySelectorAll(".pick-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const id = btn.getAttribute("data-ev");
+      if (!id) return;
+      eventId = id;
+      const loading = $("loading-state");
+      if (loading) loading.innerHTML = '<div class="loading-spinner"></div><div class="loading-text">Loading scoreboard\u2026</div>';
+      void fetchAndRender(id).then(() => {
+        if (!gameIsTerminal) startPolling();
+      });
+    });
+  });
 }
 async function fetchAndRender(id) {
   try {

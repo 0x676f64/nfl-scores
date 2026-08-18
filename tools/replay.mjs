@@ -112,6 +112,24 @@ http.createServer((req, res) => {
     return json(res, 404, { error: "no captures/standings.json — save one with: curl -o captures/standings.json 'https://site.api.espn.com/apis/v2/sports/football/nfl/standings'" });
   }
   if (p === "/api/postgame-check") return json(res, 200, { created: false, replay: true });
+  // Mirror of the server's image proxy, so local testing exercises the same
+  // same-origin path the Reddit webview requires.
+  if (p === "/api/img") {
+    const raw = url.searchParams.get("u") || "";
+    let target;
+    try { target = new URL(raw); } catch { return json(res, 400, { error: "bad url" }); }
+    const hosts = ["a.espncdn.com", "espnmedia-cdn.akamaized.net", "media.video-cdn.espn.com"];
+    if (target.protocol !== "https:" || !hosts.some((h) => target.hostname === h || target.hostname.endsWith("." + h))) {
+      return json(res, 403, { error: "host not allowed" });
+    }
+    return fetch(target.toString()).then(async (r) => {
+      if (!r.ok) return json(res, 502, { error: `upstream ${r.status}` });
+      const type = String(r.headers.get("content-type") || "image/png").split(";")[0].trim();
+      const buf = Buffer.from(await r.arrayBuffer());
+      res.writeHead(200, { "Content-Type": type, "Content-Length": buf.byteLength, "Cache-Control": "public, max-age=86400" });
+      res.end(buf);
+    }).catch(() => json(res, 502, { error: "fetch failed" }));
+  }
 
   // ── static: the built client ──
   let file = p === "/" ? "/splash.html" : p;

@@ -131,7 +131,7 @@ function logoHtml(team: NormTeam, sizeClass: string): string {
   const local = `/teams/${encodeURIComponent(team.id)}.svg`;
   // Payload URL if present, else the deterministic CDN path — either way
   // there is ALWAYS a second source before the text badge.
-  const cdn = escapeHtml(team.logo || cdnLogo(team));
+  const cdn = escapeHtml(team.logo ? proxied(team.logo) : cdnLogo(team));
   const badgeAttr = badge.replace(/"/g, "&quot;");
   const onerr = cdn
     ? `if(!this.dataset.f){this.dataset.f=1;this.src='${cdn}';}else{this.outerHTML='${badgeAttr}';}`
@@ -392,7 +392,7 @@ let infoOverlayEl: HTMLElement | null = null;
 
 function overlayRowsHtml(items: OverlayItem[]): string {
   return items.map((it, i) => {
-    const visual = it.img ? `<img class="info-row-logo" src="${it.img}" alt="">` : it.icon ? `<span class="info-row-icon">${it.icon}</span>` : "";
+    const visual = it.img ? `<img class="info-row-logo" src="${proxied(it.img)}" alt="">` : it.icon ? `<span class="info-row-icon">${it.icon}</span>` : "";
     const inner = visual + '<span class="info-row-text"><span class="info-row-label">' + it.label + "</span>" + (it.sub ? '<span class="info-row-sub">' + it.sub + "</span>" : "") + "</span>";
     const style = `animation-delay:${50 + i * 55}ms`;
     return it.url ? `<button class="info-row" type="button" data-url="${it.url}" style="${style}">${inner}</button>` : `<div class="info-row is-static" style="${style}">${inner}</div>`;
@@ -496,9 +496,18 @@ const NFL_COLORS: Record<string, string> = {
   "26": "#002244", "27": "#d50a0a", "28": "#5a1414", "29": "#0085ca", "30": "#006778",
   "33": "#241773", "34": "#03202f",
 };
+// Reddit's webview only loads same-origin assets, so every remote image is
+// routed through the server's allowlisted /api/img proxy. In a plain browser
+// this works identically (the replay server implements the same endpoint).
+function proxied(url: string): string {
+  const u = String(url || "").trim();
+  if (!u || !/^https:\/\//i.test(u)) return u;
+  return `/api/img?u=${encodeURIComponent(u)}`;
+}
+
 // Deterministic ESPN CDN logo (domain already allowed in devvit.json).
 function cdnLogo(t: NormTeam): string {
-  return `https://a.espncdn.com/i/teamlogos/nfl/500/${encodeURIComponent(t.abbr.toLowerCase())}.png`;
+  return proxied(`https://a.espncdn.com/i/teamlogos/nfl/500/${encodeURIComponent(t.abbr.toLowerCase())}.png`);
 }
 
 // Dual-mode team colors: [dark-theme, light-theme]. Joe's curated list drops
@@ -1377,7 +1386,7 @@ function gameLeaderFor(catName: string, g: NormGame): Performer | null {
         bestVal = v;
         best = {
           name: String(top.athlete?.shortName || top.athlete?.displayName || ""),
-          head: top.athlete?.headshot?.href ? String(top.athlete.headshot.href) : "",
+          head: top.athlete?.headshot?.href ? proxied(String(top.athlete.headshot.href)) : "",
           big: String(Math.round(v)),
           unit: "YDS",
           sub: String(top.displayValue || ""),
@@ -1408,7 +1417,7 @@ function sackLeader(g: NormGame): Performer | null {
           bestVal = v;
           best = {
             name: String(row.athlete?.shortName || row.athlete?.displayName || ""),
-            head: row.athlete?.headshot?.href ? String(row.athlete.headshot.href) : "",
+            head: row.athlete?.headshot?.href ? proxied(String(row.athlete.headshot.href)) : "",
             big: String(v),
             unit: v === 1 ? "SACK" : "SACKS",
             sub: "",
@@ -1560,7 +1569,7 @@ function buildLeaderCards(g: NormGame): string {
     const row = (top: any, _team: NormTeam, color: string): string => {
       if (!top) return "";
       const ath = top.athlete || {};
-      const head = ath.headshot?.href ? String(ath.headshot.href) : "";
+      const head = ath.headshot?.href ? proxied(String(ath.headshot.href)) : "";
       return `<div class="ld-row" style="--tc:${color}">` +
         (head ? `<img class="ld-head" loading="lazy" src="${escapeHtml(head)}" alt="" onerror="this.style.display='none'">` : `<span class="ld-head ld-head--empty"></span>`) +
         `<span class="ld-who"><span class="ld-name">${escapeHtml(ath.shortName || ath.displayName || "")}</span>` +
@@ -1851,7 +1860,7 @@ async function loadClipsInto(containerId: string): Promise<void> {
   el.className = "clips-grid";
   el.innerHTML = clips.slice(0, 8).map((c: any) =>
     `<button class="clip-card" type="button" data-url="${escapeHtml(String(c.url || ""))}">` +
-    (c.thumbnail ? `<img loading="lazy" src="${escapeHtml(String(c.thumbnail))}" alt="">` : "") +
+    (c.thumbnail ? `<img loading="lazy" src="${escapeHtml(proxied(String(c.thumbnail)))}" alt="" onerror="this.style.display='none'">` : "") +
     `<div class="chead">${escapeHtml(String(c.headline || "Highlight"))}</div></button>`
   ).join("");
   el.querySelectorAll<HTMLElement>(".clip-card[data-url]").forEach((card) => {
@@ -2390,10 +2399,87 @@ function renderEndedState(): void {
   if (!host) return;
   host.innerHTML = `
     <div class="ended-display">
-      <div class="ended-headline">Thread Ended</div>
+      <div class="ended-headline">Scoreboard Unavailable</div>
       <div class="ended-divider"></div>
-      <div class="ended-text">This game thread is no longer live. Live scoreboards appear here only while a game is in progress.</div>
+      <div class="ended-text">This thread isn't linked to a game yet.</div>
+      <div id="pick-game" class="pick-wrap"></div>
     </div>`;
+  void offerGamePicker();
+}
+
+// Manual fallback when automatic recovery can't identify the game: show
+// recent slates so the viewer can bind the thread themselves. Uses only the
+// existing /api/schedule endpoint.
+async function offerGamePicker(): Promise<void> {
+  const box = $("pick-game");
+  if (!box) return;
+  const days: string[] = [];
+  for (let i = 0; i < 8; i++) {
+    const d = new Date(Date.now() - i * 86400000);
+    days.push(d.toISOString().slice(0, 10));
+  }
+  const found: Array<{ id: string; label: string }> = [];
+  const diag: string[] = [];
+  for (const day of days) {
+    if (found.length >= 12) break;
+    // Plain first, then preseason and postseason slates — ESPN needs the
+    // season type stated for those or it may return nothing.
+    for (const st of ["", "1", "3"]) {
+      let events: any[] = [];
+      try {
+        const res = await fetch(`/api/schedule?date=${day}${st ? `&st=${st}` : ""}`);
+        if (!res.ok) {
+          // The server writes its error message into the 500 body — surface
+          // it so the app diagnoses itself.
+          let why = "";
+          try {
+            const body = await res.text();
+            try { why = String(JSON.parse(body)?.error || "").slice(0, 140); }
+            catch { why = body.slice(0, 140); }
+          } catch { /* body unreadable */ }
+          if (diag.length < 2) diag.push(`HTTP ${res.status}${why ? `: ${why}` : ""}`);
+          continue;
+        }
+        const data: any = await res.json();
+        events = data?.events || [];
+      } catch (e) {
+        if (diag.length < 3) diag.push(`${day.slice(5)}: fetch threw`);
+        continue;
+      }
+      if (events.length) console.log(`schedule ${day} st=${st || "-"}: ${events.length} events`);
+      for (const ev of events) {
+        const comp = ev?.competitions?.[0];
+        const cs: any[] = comp?.competitors || [];
+        const h = cs.find((c) => c?.homeAway === "home")?.team?.abbreviation || "";
+        const a = cs.find((c) => c?.homeAway === "away")?.team?.abbreviation || "";
+        if (!h || !a) continue;
+        if (!found.some((f) => f.id === String(ev.id))) {
+          found.push({ id: String(ev.id), label: `${a} @ ${h} · ${day.slice(5)}` });
+        }
+      }
+      if (events.length) break; // this day's slate found; no need for other season types
+    }
+  }
+  if (!found.length) {
+    const why = diag.length ? diag.join(" · ") : "all slates came back empty";
+    box.innerHTML = `<div class="pick-note">No recent games found to link.</div>` +
+      `<div class="pick-note pick-diag">(${escapeHtml(why)})</div>`;
+    return;
+  }
+  box.innerHTML = '<div class="pick-note">Pick the game this thread is for:</div>' +
+    found.slice(0, 12).map((f) =>
+      `<button class="pick-btn" type="button" data-ev="${escapeHtml(f.id)}">${escapeHtml(f.label)}</button>`
+    ).join("");
+  box.querySelectorAll<HTMLElement>(".pick-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const id = btn.getAttribute("data-ev");
+      if (!id) return;
+      eventId = id;
+      const loading = $("loading-state");
+      if (loading) loading.innerHTML = '<div class="loading-spinner"></div><div class="loading-text">Loading scoreboard…</div>';
+      void fetchAndRender(id).then(() => { if (!gameIsTerminal) startPolling(); });
+    });
+  });
 }
 
 async function fetchAndRender(id: string): Promise<void> {

@@ -11,7 +11,9 @@
         "site.api.espn.com",
         "a.espncdn.com",
         "fonts.googleapis.com",
-        "fonts.gstatic.com"
+        "fonts.gstatic.com",
+        "espnmedia-cdn.akamaized.net",
+        "media.video-cdn.espn.com"
       ]
     },
     "redis": true,
@@ -198,14 +200,14 @@
       "threadType": {
         "type": "select",
         "label": "Thread type",
-        "helpText": "\"Game Thread\" is the standard mode — posts a Game Thread for each game, plus an automatic Postgame Thread if enabled above. \"Broadcast Thread\" runs the app as an advanced/analytics companion to your existing game threads: posts use the Broadcast label below instead of \"Game Thread\", and NO automatic postgame or postponement threads are posted (the app only posts the threads you create from the menu).",
+        "helpText": "\"Game Thread\" is the standard mode \u2014 posts a Game Thread for each game, plus an automatic Postgame Thread if enabled above. \"Broadcast Thread\" runs the app as an advanced/analytics companion to your existing game threads: posts use the Broadcast label below instead of \"Game Thread\", and NO automatic postgame or postponement threads are posted (the app only posts the threads you create from the menu).",
         "options": [
           {
-            "label": "Game Thread (standard — posts game + postgame threads)",
+            "label": "Game Thread (standard \u2014 posts game + postgame threads)",
             "value": "game"
           },
           {
-            "label": "Broadcast Thread (companion — no automatic posts)",
+            "label": "Broadcast Thread (companion \u2014 no automatic posts)",
             "value": "broadcast"
           }
         ],
@@ -214,13 +216,13 @@
       "broadcastLabel": {
         "type": "string",
         "label": "Broadcast label (optional)",
-        "helpText": "Only used in Broadcast Thread mode — the wording used in place of \"Game Thread\" in the post title. Examples: \"Broadcast Thread\", \"Advanced View\", \"Live Scoreboard\". Leave blank to use \"Broadcast Thread\".",
+        "helpText": "Only used in Broadcast Thread mode \u2014 the wording used in place of \"Game Thread\" in the post title. Examples: \"Broadcast Thread\", \"Advanced View\", \"Live Scoreboard\". Leave blank to use \"Broadcast Thread\".",
         "defaultValue": "Broadcast Thread"
       },
       "broadcastDelay": {
         "type": "select",
         "label": "Broadcast delay",
-        "helpText": "Delay the live scoreboard by a few seconds so fans following along on a TV or streaming feed aren't spoiled by seeing plays before they happen on their screen. Off shows real-time data. Pick the delay that best matches how far behind your feed runs. No plays are skipped — the game just runs this far behind.",
+        "helpText": "Delay the live scoreboard by a few seconds so fans following along on a TV or streaming feed aren't spoiled by seeing plays before they happen on their screen. Off shows real-time data. Pick the delay that best matches how far behind your feed runs. No plays are skipped \u2014 the game just runs this far behind.",
         "options": [
           {
             "label": "Off (real-time)",
