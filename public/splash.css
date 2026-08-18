@@ -276,8 +276,10 @@ body.scorebug {
 .team-logo {
   /* Fluid: shrinks on narrow iPhones (was a fixed 84px, which overflowed the
      score row and clipped), caps at the original size on roomy screens. */
-  width: clamp(46px, 17vw, 84px);
-  height: clamp(46px, 17vw, 84px);
+  /* MLB-app parity: 96px hero logos on roomy screens, fluid floor on
+     small phones so they never overflow the score row. */
+  width: clamp(52px, 19vw, 96px);
+  height: clamp(52px, 19vw, 96px);
   object-fit: contain;
   flex-shrink: 0;
   filter: drop-shadow(0 3px 8px rgba(0, 0, 0, 0.28));

@@ -599,13 +599,6 @@ function applyTheme(theme) {
   if (theme === "light") document.documentElement.setAttribute("data-theme", "light");
   else document.documentElement.removeAttribute("data-theme");
 }
-function systemTheme() {
-  try {
-    return window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
-  } catch {
-    return "dark";
-  }
-}
 function savedTheme() {
   try {
     const v = localStorage.getItem(THEME_KEY);
@@ -615,7 +608,7 @@ function savedTheme() {
   }
 }
 function resolveTheme() {
-  return savedTheme() ?? systemTheme();
+  return savedTheme() ?? "light";
 }
 function setupThemeToggle() {
   if (document.getElementById("theme-btn")) return;
@@ -645,26 +638,6 @@ function setupThemeToggle() {
       reportError("theme re-render", e);
     }
   });
-  try {
-    const mq = window.matchMedia("(prefers-color-scheme: dark)");
-    const onSchemeChange = (e) => {
-      try {
-        localStorage.removeItem(THEME_KEY);
-      } catch {
-      }
-      theme = e.matches ? "dark" : "light";
-      applyTheme(theme);
-      paint();
-      try {
-        if (lastSummary) render(lastSummary);
-      } catch (err) {
-        reportError("scheme re-render", err);
-      }
-    };
-    if (mq.addEventListener) mq.addEventListener("change", onSchemeChange);
-    else if (mq.addListener) mq.addListener(onSchemeChange);
-  } catch {
-  }
   host.appendChild(btn);
 }
 var GRAPH_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 18 L9 12 L13 16 L21 6"/><polyline points="15 6 21 6 21 12"/></svg>';
@@ -887,7 +860,72 @@ function proxied(url) {
 function cdnLogo(t) {
   return proxied(`https://a.espncdn.com/i/teamlogos/nfl/500/${encodeURIComponent(t.abbr.toLowerCase())}.png`);
 }
-var TEAM_COLORS_DUAL = {};
+var TEAM_COLORS_DUAL = {
+  "1": ["#a71930", "#a71930"],
+  // ATL red
+  "2": ["#c60c30", "#c60c30"],
+  // BUF: royal blue -> charging red
+  "3": ["#e64100", "#c83803"],
+  // CHI: navy -> orange
+  "4": ["#fb4f14", "#fb4f14"],
+  // CIN orange
+  "5": ["#ff3c00", "#311d00"],
+  // CLE: orange bright in dark, brown in light
+  "6": ["#b0b7bc", "#7f9695"],
+  // DAL: navy -> silver
+  "7": ["#fb4f14", "#fb4f14"],
+  // DEN orange
+  "8": ["#0076b6", "#0076b6"],
+  // DET Honolulu blue (allowed)
+  "9": ["#ffb612", "#203731"],
+  // GB: gold in dark, forest in light
+  "10": ["#4b92db", "#4b92db"],
+  // TEN light blue (allowed)
+  "11": ["#a2aaad", "#6b7a86"],
+  // IND: royal blue -> grey
+  "12": ["#e31837", "#e31837"],
+  // KC red
+  "13": ["#c4c9cc", "#101820"],
+  // LV: silver in dark, black in light
+  "14": ["#ffa300", "#ffa300"],
+  // LAR: royal -> sol gold
+  "15": ["#008e97", "#008e97"],
+  // MIA aqua
+  "16": ["#4f2683", "#4f2683"],
+  // MIN purple
+  "17": ["#c60c30", "#c60c30"],
+  // NE: navy -> red
+  "18": ["#d3bc8d", "#9f8958"],
+  // NO gold
+  "19": ["#a71930", "#a71930"],
+  // NYG: royal blue -> red
+  "20": ["#1f8a5f", "#125740"],
+  // NYJ green (brighter in dark)
+  "21": ["#3d8f8f", "#004c54"],
+  // PHI midnight green (brighter in dark)
+  "22": ["#97233f", "#97233f"],
+  // ARI cardinal
+  "23": ["#ffb612", "#ffb612"],
+  // PIT gold
+  "24": ["#0080c6", "#0080c6"],
+  // LAC powder blue (allowed)
+  "25": ["#aa0000", "#aa0000"],
+  // SF red
+  "26": ["#69be28", "#69be28"],
+  // SEA: navy -> action green
+  "27": ["#d50a0a", "#d50a0a"],
+  // TB red
+  "28": ["#8a2b2b", "#5a1414"],
+  // WSH burgundy (brighter in dark)
+  "29": ["#9aa2a9", "#101820"],
+  // CAR: process blue -> silver/black
+  "30": ["#00838f", "#006778"],
+  // JAX teal
+  "33": ["#6e56cf", "#241773"],
+  // BAL purple (brighter in dark)
+  "34": ["#c41e3a", "#c41e3a"]
+  // HOU: deep steel -> battle red
+};
 function railColorOf(t, fallback) {
   const dual = TEAM_COLORS_DUAL[t.id];
   if (dual) {
@@ -1673,7 +1711,7 @@ function buildTeamCompare(g) {
     a = h;
     h = t;
   }
-  const ac = teamColorOf(g.away, "#d50a0a"), hc = teamColorOf(g.home, "#013369");
+  const ac = railColorOf(g.away, "#d50a0a"), hc = railColorOf(g.home, "#013369");
   const rows = {};
   (a?.statistics || []).forEach((st) => {
     rows[st.name] = { label: st.label || st.name, a: st.displayValue };
@@ -1724,7 +1762,7 @@ function buildLeaderCards(g) {
       byCat.set(key, cur);
     });
   });
-  const ac = teamColorOf(g.away, "#d50a0a"), hc = teamColorOf(g.home, "#013369");
+  const ac = railColorOf(g.away, "#d50a0a"), hc = railColorOf(g.home, "#013369");
   let out = "";
   let i = 0;
   byCat.forEach((pair, key) => {
