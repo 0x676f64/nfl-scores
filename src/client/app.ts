@@ -1539,10 +1539,11 @@ function renderFinal(g: NormGame): void {
   // No meta line: the status block already says Final and the app title
   // already names the venue.
   let html = buildTopPerformers(g);
-  html += `<div class="clips-grid" id="final-clips"></div>`;
   body.innerHTML = html;
   hydrateProxiedImages(body);
-  void loadClipsInto("final-clips");
+  // Highlights rail intentionally OFF in wrap for now (thumbnails weren't
+  // rendering); the Plays tab still carries clips. To restore: re-add the
+  // final-clips grid div + loadClipsInto("final-clips").
 }
 
 function renderPostponed(g: NormGame): void {

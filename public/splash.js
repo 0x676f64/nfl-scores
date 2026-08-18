@@ -1676,10 +1676,8 @@ function renderFinal(g) {
   const body = $("final-body");
   if (!body) return;
   let html = buildTopPerformers(g);
-  html += `<div class="clips-grid" id="final-clips"></div>`;
   body.innerHTML = html;
   hydrateProxiedImages(body);
-  void loadClipsInto("final-clips");
 }
 function renderPostponed(g) {
   const body = $("postponed-body");
