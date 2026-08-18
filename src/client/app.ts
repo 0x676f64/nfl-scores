@@ -2072,8 +2072,34 @@ async function renderWinProb(): Promise<void> {
   wireWinProbHover(g.away.abbr, g.home.abbr, awayColor, homeColor);
 }
 
-.
-+69
+function wireWinProbHover(awayAbbr: string, homeAbbr: string, awayColor: string, homeColor: string): void {
+  const chart = document.querySelector(".wp-chart") as SVGElement | null;
+  const tooltip = $("wp-tooltip");
+  const dot = document.getElementById("wp-dot");
+  if (!chart || !tooltip || !dot) return;
+
+  const showFor = (z: SVGElement): void => {
+    const ds = (z as unknown as HTMLElement).dataset;
+    dot.setAttribute("cx", ds.x || "0");
+    dot.setAttribute("cy", ds.y || "0");
+    (dot as unknown as HTMLElement).style.display = "block";
+    tooltip.innerHTML = `
+      ${ds.inn ? `<div class="wp-tt-inn">${ds.inn}</div>` : ""}
+      ${ds.desc ? `<div class="wp-tt-desc">${ds.desc}</div>` : ""}
+      <div class="wp-tt-probs"><span style="color:${awayColor}">${awayAbbr} ${ds.away}%</span><span style="color:${homeColor}">${homeAbbr} ${ds.home}%</span></div>`;
+    tooltip.style.display = "block";
+  };
+
+  const hide = (): void => {
+    tooltip.style.display = "none";
+    (dot as unknown as HTMLElement).style.display = "none";
+  };
+
+  chart.querySelectorAll(".wp-zone").forEach((zone) => {
+    const z = zone as SVGElement;
+    z.addEventListener("mouseenter", () => showFor(z));
+    z.addEventListener("mouseleave", hide);
+    z.addEventListener("click", (e: Event) => {
       e.stopPropagation();
       showFor(z);
     });
@@ -2106,7 +2132,7 @@ async function fetchStandingsData(): Promise<any> {
   if (standCache && now - standCacheTs < 120000) return standCache;
   const res = await fetch("/api/standings");
   if (!res.ok) throw new Error("standings fetch failed");
-  c77onst data = await res.json();
+  const data = await res.json();
   standCache = data; standCacheTs = now;
   return data;
 }
@@ -2139,9 +2165,7 @@ function statOf(entry: any, names: string[]): string {
 
 async function loadStandingsView(): Promise<void> {
   const body = $("stand-body");
-  if 8*---*-**********************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************88888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888899999999999999999999999999999999999++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++*-------------------------------------------------------------------------------------------------------3
-  -
-  3---3333333(!body) return;
+  if (!body) return;
   body.innerHTML = '<div class="stand-msg">Loading…</div>';
   try {
     const data = await fetchStandingsData();
