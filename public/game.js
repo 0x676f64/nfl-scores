@@ -1637,8 +1637,7 @@ function buildTopPerformers(g) {
 function renderFinal(g) {
   const body = $("final-body");
   if (!body) return;
-  let html = `<div class="wrap-meta">${escapeHtml(g.statusDetail || "Final")}${g.venue?.fullName ? " \xB7 " + escapeHtml(String(g.venue.fullName)) : ""}</div>`;
-  html += buildTopPerformers(g);
+  let html = buildTopPerformers(g);
   html += `<div class="clips-grid" id="final-clips"></div>`;
   body.innerHTML = html;
   hydrateProxiedImages(body);
@@ -2028,7 +2027,15 @@ function buildPlayIndex() {
   if (lastSummary?.drives?.current) add(lastSummary.drives.current.plays || []);
   return map;
 }
+var wpAnimate = false;
 async function renderWinProb() {
+  try {
+    await renderWinProbInner();
+  } finally {
+    wpAnimate = false;
+  }
+}
+async function renderWinProbInner() {
   const container = $("tab-winprob");
   if (!container) return;
   const g = lastGame;
@@ -2126,7 +2133,7 @@ async function renderWinProb() {
         <text x="${PL - 4}" y="${PT + 6}" text-anchor="end" font-size="8" fill="${awayColor}" font-family="monospace">${escapeHtml(g.away.abbr)}</text>
         <text x="${PL - 4}" y="${PT + CH + 2}" text-anchor="end" font-size="8" fill="${homeColor}" font-family="monospace">${escapeHtml(g.home.abbr)}</text>
         ${quarterLines}
-        <polyline points="${linePoints}" fill="none" stroke="${ink.strong}" stroke-width="1.2" stroke-linejoin="round"/>
+        <polyline class="wp-line${wpAnimate ? " wp-draw" : ""}" pathLength="1" points="${linePoints}" fill="none" stroke="${ink.strong}" stroke-width="1.2" stroke-linejoin="round"/>
         ${zones}
         <circle id="wp-dot" cx="0" cy="0" r="4" fill="${ink.dotFill}" stroke="${ink.dotRing}" stroke-width="2" style="display:none;pointer-events:none;"/>
         <text x="${PL + CW / 2}" y="${H - 2}" text-anchor="middle" font-size="9" fill="${ink.label}" font-family="monospace">QUARTER</text>
@@ -2216,26 +2223,111 @@ function statOf(entry, names) {
   }
   return "\u2014";
 }
+var NFL_DIVISIONS = {
+  // AFC East / North / South / West
+  "2": "AFC East",
+  "15": "AFC East",
+  "17": "AFC East",
+  "20": "AFC East",
+  "33": "AFC North",
+  "4": "AFC North",
+  "5": "AFC North",
+  "23": "AFC North",
+  "34": "AFC South",
+  "11": "AFC South",
+  "30": "AFC South",
+  "10": "AFC South",
+  "7": "AFC West",
+  "12": "AFC West",
+  "13": "AFC West",
+  "24": "AFC West",
+  // NFC East / North / South / West
+  "6": "NFC East",
+  "19": "NFC East",
+  "21": "NFC East",
+  "28": "NFC East",
+  "3": "NFC North",
+  "8": "NFC North",
+  "9": "NFC North",
+  "16": "NFC North",
+  "1": "NFC South",
+  "29": "NFC South",
+  "18": "NFC South",
+  "27": "NFC South",
+  "22": "NFC West",
+  "14": "NFC West",
+  "25": "NFC West",
+  "26": "NFC West"
+};
+var DIV_ORDER = ["East", "North", "South", "West"];
+var standView = "standings";
+function bracketSlot(label) {
+  return `<div class="bk-slot"><span class="bk-seed">${escapeHtml(label)}</span><span class="bk-box"></span></div>`;
+}
+function bracketPair(a, b) {
+  return `<div class="bk-pair">${bracketSlot(a)}${bracketSlot(b)}</div>`;
+}
+function buildBracketHtml(conf) {
+  const col = (title, inner) => `<div class="bk-col"><div class="bk-col-hdr">${escapeHtml(title)}</div>${inner}</div>`;
+  return `<div class="bracket-scroll"><div class="bracket">` + col("WILD CARD", bracketPair("2", "7") + bracketPair("3", "6") + bracketPair("4", "5")) + col("DIVISIONAL", bracketPair("1", "\u2014") + bracketPair("\u2014", "\u2014")) + col(`${escapeHtml(conf)} CHAMP`, bracketPair("\u2014", "\u2014")) + col("SUPER BOWL", `<div class="bk-pair bk-final">${bracketSlot("AFC")}${bracketSlot("NFC")}</div>`) + `</div></div>`;
+}
 async function loadStandingsView() {
   const body = $("stand-body");
   if (!body) return;
   body.innerHTML = '<div class="stand-msg">Loading\u2026</div>';
   try {
-    const data = await fetchStandingsData();
-    const groups = collectGroups(data).filter((grp) => grp.name.toUpperCase().includes(standActiveLeague) || grp.name.toUpperCase().includes(standActiveLeague === "AFC" ? "AMERICAN" : "NATIONAL"));
-    const use = groups.length ? groups : collectGroups(data);
-    if (!use.length) {
-      body.innerHTML = '<div class="stand-msg">No standings available.</div>';
-      return;
+    const seg = `<div class="plays-toggle stand-view-toggle"><button class="plays-seg${standView === "standings" ? " is-active" : ""}" data-sv="standings" type="button">Standings</button><button class="plays-seg${standView === "bracket" ? " is-active" : ""}" data-sv="bracket" type="button">Bracket</button></div>`;
+    if (standView === "bracket") {
+      body.innerHTML = seg + buildBracketHtml(standActiveLeague);
+    } else {
+      const data = await fetchStandingsData();
+      const groups = collectGroups(data).filter((grp) => grp.name.toUpperCase().includes(standActiveLeague) || grp.name.toUpperCase().includes(standActiveLeague === "AFC" ? "AMERICAN" : "NATIONAL"));
+      const use = groups.length ? groups : collectGroups(data);
+      if (!use.length) {
+        body.innerHTML = seg + '<div class="stand-msg">No standings available.</div>';
+      } else {
+        const entries = use.flatMap((grp) => grp.entries);
+        const byDiv = /* @__PURE__ */ new Map();
+        entries.forEach((e) => {
+          const id = String(e?.team?.id ?? "");
+          const div = NFL_DIVISIONS[id] || "";
+          if (!div.startsWith(standActiveLeague)) return;
+          const list = byDiv.get(div) || [];
+          list.push(e);
+          byDiv.set(div, list);
+        });
+        const cards = DIV_ORDER.map((d) => {
+          const name = `${standActiveLeague} ${d}`;
+          const list = byDiv.get(name) || [];
+          if (!list.length) return "";
+          const rows = list.map((e, i) => {
+            const t = e?.team || {};
+            const team = {
+              id: String(t.id ?? ""),
+              abbr: String(t.abbreviation || "").toUpperCase(),
+              name: String(t.displayName || ""),
+              nick: String(t.name || ""),
+              record: "",
+              score: 0,
+              color: "",
+              logo: ""
+            };
+            return `<div class="stand-row${i === 0 ? " leader" : ""}"><span class="stand-pos${i === 0 ? " first" : ""}">${i + 1}</span><span class="stand-team">${logoImg(team, "stand-logo")}<span class="stand-abbr">${escapeHtml(team.abbr.slice(0, 4))}</span></span><span class="stand-stat">${escapeHtml(statOf(e, ["wins", "W"]))}</span><span class="stand-stat">${escapeHtml(statOf(e, ["losses", "L"]))}</span><span class="stand-stat muted">${escapeHtml(statOf(e, ["ties", "T"]))}</span><span class="stand-pct"><span class="stand-pct-val">${escapeHtml(statOf(e, ["winPercent", "PCT"]))}</span></span></div>`;
+          }).join("");
+          return `<div class="stand-card"><div class="stand-card-hdr"><span class="stand-card-dot"></span><span class="stand-card-name">${escapeHtml(name)}</span></div><div class="stand-col-hdr"><span>#</span><span class="stand-col-team">Team</span><span>W</span><span>L</span><span>T</span><span class="stand-col-pct">PCT</span></div>` + rows + `</div>`;
+        }).join("");
+        body.innerHTML = seg + (cards || '<div class="stand-msg">No standings available.</div>');
+      }
     }
-    body.innerHTML = use.map((grp) => {
-      const rows = grp.entries.map((e, i) => {
-        const t = e?.team || {};
-        const abbr = String(t.abbreviation || t.displayName || e?.team || "").toUpperCase().slice(0, 4);
-        return `<div class="stand-row${i === 0 ? " leader" : ""}"><span class="stand-pos${i === 0 ? " first" : ""}">${i + 1}</span><span class="stand-team"><span class="stand-abbr">${escapeHtml(abbr)}</span></span><span class="stand-stat">${escapeHtml(statOf(e, ["wins", "W"]))}</span><span class="stand-stat">${escapeHtml(statOf(e, ["losses", "L"]))}</span><span class="stand-stat muted">${escapeHtml(statOf(e, ["ties", "T"]))}</span><span class="stand-pct"><span class="stand-pct-val">${escapeHtml(statOf(e, ["winPercent", "PCT"]))}</span></span></div>`;
-      }).join("");
-      return `<div class="stand-card"><div class="stand-card-hdr"><span class="stand-card-dot"></span><span class="stand-card-name">${escapeHtml(grp.name || "Division")}</span></div><div class="stand-col-hdr"><span>#</span><span class="stand-col-team">Team</span><span>W</span><span>L</span><span>T</span><span class="stand-col-pct">PCT</span></div>` + rows + `</div>`;
-    }).join("");
+    body.querySelectorAll(".stand-view-toggle .plays-seg").forEach((s) => {
+      s.addEventListener("click", () => {
+        const v = s.getAttribute("data-sv");
+        if (v === "standings" || v === "bracket") {
+          standView = v;
+          void loadStandingsView();
+        }
+      });
+    });
   } catch (e) {
     reportError("loadStandingsView", e);
     body.innerHTML = '<div class="stand-msg">Could not load standings.</div>';
@@ -2289,8 +2381,6 @@ function render(summary) {
     }
     venueEl.textContent = [venueName.toUpperCase(), when].filter(Boolean).join(" \xB7 ");
   }
-  const netEl = $("network-info");
-  if (netEl) netEl.textContent = networksOf(g);
   const ctxEl = $("game-context");
   if (ctxEl) ctxEl.textContent = gameContextLabel(g);
   setLogoHolder("away-logo-holder", g.away, "team-logo");
@@ -2302,8 +2392,17 @@ function render(summary) {
   if (ar) ar.textContent = g.away.record;
   if (hr) hr.textContent = g.home.record;
   const as = $("away-score"), hs = $("home-score");
-  if (as) as.textContent = String(g.away.score);
-  if (hs) hs.textContent = String(g.home.score);
+  const bump = (el, v) => {
+    if (!el) return;
+    if (el.textContent !== v && el.textContent !== "") {
+      el.classList.remove("score-bump");
+      void el.offsetWidth;
+      el.classList.add("score-bump");
+    }
+    el.textContent = v;
+  };
+  bump(as, String(g.away.score));
+  bump(hs, String(g.home.score));
   const badge = $("status-badge");
   const clock = $("inning-info");
   const possEl = $("poss-text");
@@ -2448,6 +2547,7 @@ function setupTabs() {
         setPlaysView("scoring");
       }
       if (targetTab === "winprob") {
+        wpAnimate = true;
         void renderWinProb();
       }
       if (targetTab === "standings") {

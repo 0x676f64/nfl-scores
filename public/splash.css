@@ -13,9 +13,9 @@
   --accent-glow: rgba(213, 10, 10, 0.18);
 
   --text-primary: #ffffff;
-  --text-secondary: rgba(255, 255, 255, 0.7);
-  --text-muted: rgba(255, 255, 255, 0.45);
-  --text-faint: rgba(255, 255, 255, 0.25);
+  --text-secondary: rgba(226, 236, 248, 0.82);   /* cool blue-white, up from grey .7 */
+  --text-muted: rgba(196, 210, 228, 0.55);
+  --text-faint: rgba(196, 210, 228, 0.28);
 
   --border-subtle: rgba(255, 255, 255, 0.06);
   --border-medium: rgba(255, 255, 255, 0.12);
@@ -174,7 +174,7 @@ body.scorebug {
 /* Fixed-size zones — never grow, never shrink */
 .scorebug-header,
 .tab-bar {
-  background: transparent;
+  background: var(--bg-card);
   flex-shrink: 0;
 }
 
@@ -2032,10 +2032,10 @@ body.is-postponed .linescore {
    ═══════════════════════════════════════════════════════════════════════════ */
 
 [data-theme="light"] {
-  --bg-deep: #d7e1eb;
-  --bg-card: #f2f6fa; /* ice — cool white, not blinding */
-  --bg-elev-1: rgba(10, 24, 40, 0.04);
-  --bg-elev-2: rgba(10, 24, 40, 0.08);
+  --bg-deep: #c9d8e8;
+  --bg-card: #eaf1f9; /* ICE — a real blue hue, not just cool white */
+  --bg-elev-1: rgba(19, 51, 105, 0.06);
+  --bg-elev-2: rgba(19, 51, 105, 0.11);
 
   --accent: #d50a0a;
   --accent-dim: rgba(213, 10, 10, 0.55);
@@ -2806,4 +2806,50 @@ body.is-pregame .linescore {
   background: var(--text-muted); opacity: 0.38;
   -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='7.5' r='4.2'/%3E%3Cpath d='M3.5 24c0-4.7 3.8-8.5 8.5-8.5s8.5 3.8 8.5 8.5z'/%3E%3C/svg%3E") center bottom / contain no-repeat;
           mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='7.5' r='4.2'/%3E%3Cpath d='M3.5 24c0-4.7 3.8-8.5 8.5-8.5s8.5 3.8 8.5 8.5z'/%3E%3C/svg%3E") center bottom / contain no-repeat;
+}
+
+/* ── dark-mode pop: display type goes full white ────────────────────── */
+:root:not([data-theme="light"]) .dv-result,
+:root:not([data-theme="light"]) .lp-title,
+:root:not([data-theme="light"]) .stand-card-name,
+:root:not([data-theme="light"]) .dp-title b,
+:root:not([data-theme="light"]) .tp-big { color: #fff; }
+
+/* ── standings rows: logos ──────────────────────────────────────────── */
+.stand-team { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.stand-logo { width: 18px; height: 18px; object-fit: contain; flex: 0 0 auto; }
+.stand-view-toggle { margin-bottom: 8px; }
+
+/* ── playoff bracket (empty until seeding) ──────────────────────────── */
+.bracket-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; padding: 4px 2px 8px; }
+.bracket { display: grid; grid-template-columns: repeat(4, minmax(96px, 1fr)); gap: 10px; min-width: 430px; }
+.bk-col { display: flex; flex-direction: column; gap: 10px; justify-content: center; }
+.bk-col-hdr {
+  font-family: var(--font-mono); font-size: 8.5px; letter-spacing: .12em;
+  color: var(--text-muted); text-align: center; margin-bottom: 2px;
+}
+.bk-pair { display: flex; flex-direction: column; gap: 4px; background: var(--bg-elev-1);
+  border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 6px; }
+.bk-slot { display: flex; align-items: center; gap: 7px; }
+.bk-seed { font-family: var(--font-display); font-weight: 700; font-size: 12px;
+  color: var(--text-muted); width: 24px; text-align: center; flex: 0 0 auto; }
+.bk-box { flex: 1; height: 26px; border: 1.5px dashed var(--border-medium); border-radius: 6px;
+  background: var(--bg-elev-1); }
+.bk-final { border-color: var(--accent-dim); }
+.bk-final .bk-seed { color: var(--text-secondary); }
+
+/* ── win prob entrance sweep ────────────────────────────────────────── */
+@keyframes wp-draw-line { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
+.wp-line.wp-draw { stroke-dasharray: 1; stroke-dashoffset: 1; animation: wp-draw-line 1.1s var(--ease-out) forwards; }
+@media (prefers-reduced-motion: reduce) { .wp-line.wp-draw { animation: none; stroke-dashoffset: 0; } }
+
+/* ── score change bump ──────────────────────────────────────────────── */
+@keyframes score-bump-kf { 0% { transform: scale(1); } 40% { transform: scale(1.22); } 100% { transform: scale(1); } }
+.score-bump { display: inline-block; animation: score-bump-kf .5s var(--ease-out); }
+
+/* ── desktop/tablet density: wider screens earn more columns ────────── */
+@media (min-width: 700px) {
+  .tp-grid { grid-template-columns: repeat(4, 1fr); }
+  .ld-grid { grid-template-columns: repeat(3, 1fr); }
+  .clips-grid { grid-template-columns: repeat(3, 1fr); }
 }
