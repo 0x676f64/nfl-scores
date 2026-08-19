@@ -1530,11 +1530,14 @@ function renderLinescore(g) {
       const v = t.linescores[i - 1];
       const has = v != null && i <= t.linescores.length;
       let cls = "ls-inning";
+      let style = "";
       if (!has) cls += " ls-empty";
       else if (v === 0) cls += " ls-zero";
-      else cls += " ls-nonzero";
+      else {
+        cls += " ls-nonzero ls-scored";
+      }
       if (i === g.period && g.phase === "in") cls += " ls-current";
-      cells += `<td class="${cls}">${has ? v : "\u2013"}</td>`;
+      cells += `<td class="${cls}"${style}>${has ? v : "\u2013"}</td>`;
     }
     cells += `<td class="ls-total ls-r-value ${t.score === 0 ? "ls-zero" : "ls-nonzero"}">${t.score}</td>`;
     return `<tr class="${loser ? "ls-row-loser" : ""}">${cells}</tr>`;
@@ -2427,6 +2430,9 @@ function render(summary) {
   const ar = $("away-record"), hr = $("home-record");
   if (ar) ar.textContent = g.away.record;
   if (hr) hr.textContent = g.home.record;
+  const awayWrap = $("away-logo-holder"), homeWrap = $("home-logo-holder");
+  if (awayWrap) awayWrap.style.setProperty("--wash", railColorOf(g.away, "#d50a0a"));
+  if (homeWrap) homeWrap.style.setProperty("--wash", railColorOf(g.home, "#013369"));
   const as = $("away-score"), hs = $("home-score");
   const bump = (el, v) => {
     if (!el) return;
