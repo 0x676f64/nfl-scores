@@ -262,7 +262,7 @@ function setupExpand(): void {
   btn.style.cssText =
     "position:absolute;top:10px;right:12px;z-index:40;width:25px;height:25px;" +
     "display:flex;align-items:center;justify-content:center;padding:0;" +
-    "background:var(--bg-elev-2);color:var(--text-primary);border:1px solid var(--border-medium);" +
+    "background:rgba(255,255,255,0.14);color:#fff;border:1px solid rgba(255,255,255,0.3);" +
     "border-radius:6px;cursor:pointer;-webkit-tap-highlight-color:transparent;" +
     "backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);";
 
@@ -349,7 +349,7 @@ function setupThemeToggle(): void {
   btn.style.cssText =
     "position:absolute;top:10px;left:12px;z-index:40;width:25px;height:25px;" +
     "display:flex;align-items:center;justify-content:center;padding:0;" +
-    "background:var(--bg-elev-2);color:var(--text-primary);border:1px solid var(--border-medium);" +
+    "background:rgba(255,255,255,0.14);color:#fff;border:1px solid rgba(255,255,255,0.3);" +
     "border-radius:6px;cursor:pointer;-webkit-tap-highlight-color:transparent;" +
     "backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);";
 
@@ -420,7 +420,7 @@ function setOverlayRows(items: OverlayItem[]): void {
 function mkTopMiniButton(id: string, label: string, icon: string, side: "left" | "right", offsetPx: number): HTMLButtonElement {
   const b = document.createElement("button");
   b.id = id; b.type = "button"; b.className = "topbar-mini-btn"; b.setAttribute("aria-label", label); b.innerHTML = icon;
-  b.style.cssText = "position:absolute;top:10px;" + side + ":" + offsetPx + "px;z-index:40;width:25px;height:25px;display:flex;align-items:center;justify-content:center;padding:0;background:var(--bg-elev-2);color:var(--text-primary);border:1px solid var(--border-medium);border-radius:6px;cursor:pointer;-webkit-tap-highlight-color:transparent;backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);";
+  b.style.cssText = "position:absolute;top:10px;" + side + ":" + offsetPx + "px;z-index:40;width:25px;height:25px;display:flex;align-items:center;justify-content:center;padding:0;background:rgba(255,255,255,0.14);color:#fff;border:1px solid rgba(255,255,255,0.3);border-radius:6px;cursor:pointer;-webkit-tap-highlight-color:transparent;backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);";
   return b;
 }
 
@@ -918,6 +918,38 @@ function playTypeText(p: any): string {
   return String(p?.type?.text || p?.type?.abbreviation || "");
 }
 function isAdminPlay(p: any): boolean { return ADMIN_PLAY.test(playTypeText(p)); }
+// ESPN drive play lists include events that aren't offensive plays: timeouts
+// and period markers (admin), the kickoff that started the possession, and
+// sometimes the OTHER team's punt as the drive's first entry. None of those
+// should count toward "N plays" — mirror ESPN's own offensivePlays notion.
+// The plays a drive should DISPLAY: same exclusions as the count — no
+// timeouts/period markers, no kickoffs (they belong to neither drive), no
+// opponent punt at the head of the receiving team's list.
+function displayPlaysOf(drive: any): any[] {
+  const plays: any[] = drive?.plays || [];
+  const kept = plays.filter((p: any) => {
+    if (isAdminPlay(p)) return false;
+    if (/kickoff/.test(playTypeText(p).toLowerCase())) return false;
+    return true;
+  });
+  if (kept.length && /punt/.test(playTypeText(kept[0]).toLowerCase())) kept.shift();
+  return kept;
+}
+
+function realPlayCount(drive: any): number {
+  const explicit = drive?.offensivePlays;
+  if (typeof explicit === "number" && explicit >= 0) return explicit;
+  const plays: any[] = drive?.plays || [];
+  const kept = plays.filter((p: any) => {
+    const t = playTypeText(p).toLowerCase();
+    if (isAdminPlay(p)) return false;
+    if (/kickoff/.test(t)) return false;
+    return true;
+  });
+  // A punt at the very head of the drive is the opponent's punt TO us.
+  if (kept.length && /punt/.test(playTypeText(kept[0]).toLowerCase())) kept.shift();
+  return kept.length;
+}
 function isAirPlay(p: any): boolean {
   const t = playTypeText(p).toLowerCase();
   if (GROUND_OVERRIDE.test(t)) return false;
@@ -1275,7 +1307,7 @@ function renderDriveHeader(summary: any, g: NormGame): void {
   const off = offenseOf(summary, g);
   if (!drive || !off) { hdr.style.display = "none"; return; }
   const meta = [
-    `${(drive?.plays || []).filter((p: any) => !isAdminPlay(p)).length} plays`,
+    `${realPlayCount(drive)} plays`,
     drive?.yards != null ? `${drive.yards} yards` : "",
     drive?.timeElapsed?.displayValue || "",
   ].filter(Boolean).join(", ");
@@ -1848,7 +1880,7 @@ function buildDriveCards(g: NormGame): string {
       `<span class="dv-stat"><span class="dv-stat-k">${label}</span><span class="dv-stat-v">${escapeHtml(val)}</span></span>`;
     const sc = driveScores(d);
     const open = openDrives.has(w.key);
-    const plays: any[] = d?.plays || [];
+    const plays: any[] = displayPlaysOf(d);
     const body = plays.length
       ? `<div class="drive-body"><div class="dp-list">${plays.map((p) => playEntryHtml(p, color)).join("")}</div></div>`
       : "";
@@ -1857,7 +1889,7 @@ function buildDriveCards(g: NormGame): string {
       `<div class="drive-head">` +
       (team ? logoImg(team, "drive-logo") : "") +
       `<span class="dv-result">${escapeHtml(result)}</span>` +
-      stat("PLAYS", String(d?.offensivePlays ?? plays.filter((p: any) => !isAdminPlay(p)).length)) +
+      stat("PLAYS", String(realPlayCount(d))) +
       stat("YDS", String(d?.yards ?? "—")) +
       stat("TTL TIME", String(d?.timeElapsed?.displayValue || "—")) +
       (sc ? `<span class="dv-score">` +

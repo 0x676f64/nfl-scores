@@ -555,7 +555,7 @@ function setupExpand() {
   btn.type = "button";
   btn.setAttribute("aria-label", "Open full screen");
   btn.innerHTML = EXPAND_ICON;
-  btn.style.cssText = "position:absolute;top:10px;right:12px;z-index:40;width:25px;height:25px;display:flex;align-items:center;justify-content:center;padding:0;background:var(--bg-elev-2);color:var(--text-primary);border:1px solid var(--border-medium);border-radius:6px;cursor:pointer;-webkit-tap-highlight-color:transparent;backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);";
+  btn.style.cssText = "position:absolute;top:10px;right:12px;z-index:40;width:25px;height:25px;display:flex;align-items:center;justify-content:center;padding:0;background:rgba(255,255,255,0.14);color:#fff;border:1px solid rgba(255,255,255,0.3);border-radius:6px;cursor:pointer;-webkit-tap-highlight-color:transparent;backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);";
   let modePoll = 0;
   const sync = () => {
     const expanded = isExpandedMode();
@@ -618,7 +618,7 @@ function setupThemeToggle() {
   const btn = document.createElement("button");
   btn.id = "theme-btn";
   btn.type = "button";
-  btn.style.cssText = "position:absolute;top:10px;left:12px;z-index:40;width:25px;height:25px;display:flex;align-items:center;justify-content:center;padding:0;background:var(--bg-elev-2);color:var(--text-primary);border:1px solid var(--border-medium);border-radius:6px;cursor:pointer;-webkit-tap-highlight-color:transparent;backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);";
+  btn.style.cssText = "position:absolute;top:10px;left:12px;z-index:40;width:25px;height:25px;display:flex;align-items:center;justify-content:center;padding:0;background:rgba(255,255,255,0.14);color:#fff;border:1px solid rgba(255,255,255,0.3);border-radius:6px;cursor:pointer;-webkit-tap-highlight-color:transparent;backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);";
   const paint = () => {
     btn.innerHTML = theme === "light" ? MOON_ICON : SUN_ICON;
     btn.setAttribute("aria-label", theme === "light" ? "Switch to dark mode" : "Switch to light mode");
@@ -714,7 +714,7 @@ function mkTopMiniButton(id, label, icon, side, offsetPx) {
   b.className = "topbar-mini-btn";
   b.setAttribute("aria-label", label);
   b.innerHTML = icon;
-  b.style.cssText = "position:absolute;top:10px;" + side + ":" + offsetPx + "px;z-index:40;width:25px;height:25px;display:flex;align-items:center;justify-content:center;padding:0;background:var(--bg-elev-2);color:var(--text-primary);border:1px solid var(--border-medium);border-radius:6px;cursor:pointer;-webkit-tap-highlight-color:transparent;backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);";
+  b.style.cssText = "position:absolute;top:10px;" + side + ":" + offsetPx + "px;z-index:40;width:25px;height:25px;display:flex;align-items:center;justify-content:center;padding:0;background:rgba(255,255,255,0.14);color:#fff;border:1px solid rgba(255,255,255,0.3);border-radius:6px;cursor:pointer;-webkit-tap-highlight-color:transparent;backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);";
   return b;
 }
 function setupGraphButton() {
@@ -1177,6 +1177,29 @@ function playTypeText(p) {
 function isAdminPlay(p) {
   return ADMIN_PLAY.test(playTypeText(p));
 }
+function displayPlaysOf(drive) {
+  const plays = drive?.plays || [];
+  const kept = plays.filter((p) => {
+    if (isAdminPlay(p)) return false;
+    if (/kickoff/.test(playTypeText(p).toLowerCase())) return false;
+    return true;
+  });
+  if (kept.length && /punt/.test(playTypeText(kept[0]).toLowerCase())) kept.shift();
+  return kept;
+}
+function realPlayCount(drive) {
+  const explicit = drive?.offensivePlays;
+  if (typeof explicit === "number" && explicit >= 0) return explicit;
+  const plays = drive?.plays || [];
+  const kept = plays.filter((p) => {
+    const t = playTypeText(p).toLowerCase();
+    if (isAdminPlay(p)) return false;
+    if (/kickoff/.test(t)) return false;
+    return true;
+  });
+  if (kept.length && /punt/.test(playTypeText(kept[0]).toLowerCase())) kept.shift();
+  return kept.length;
+}
 function isAirPlay(p) {
   const t = playTypeText(p).toLowerCase();
   if (GROUND_OVERRIDE.test(t)) return false;
@@ -1454,7 +1477,7 @@ function renderDriveHeader(summary, g) {
     return;
   }
   const meta = [
-    `${(drive?.plays || []).filter((p) => !isAdminPlay(p)).length} plays`,
+    `${realPlayCount(drive)} plays`,
     drive?.yards != null ? `${drive.yards} yards` : "",
     drive?.timeElapsed?.displayValue || ""
   ].filter(Boolean).join(", ");
@@ -1941,9 +1964,9 @@ function buildDriveCards(g) {
     const stat = (label, val) => `<span class="dv-stat"><span class="dv-stat-k">${label}</span><span class="dv-stat-v">${escapeHtml(val)}</span></span>`;
     const sc = driveScores(d);
     const open = openDrives.has(w.key);
-    const plays = d?.plays || [];
+    const plays = displayPlaysOf(d);
     const body = plays.length ? `<div class="drive-body"><div class="dp-list">${plays.map((p) => playEntryHtml(p, color)).join("")}</div></div>` : "";
-    return `<button type="button" class="drive-card${w.current ? " current" : ""}${open ? " open" : ""}${playsAnimate ? " rise-in" : ""}" data-drive="${w.key}" style="--i:${idx}"><div class="drive-head">` + (team ? logoImg(team, "drive-logo") : "") + `<span class="dv-result">${escapeHtml(result)}</span>` + stat("PLAYS", String(d?.offensivePlays ?? plays.filter((p) => !isAdminPlay(p)).length)) + stat("YDS", String(d?.yards ?? "\u2014")) + stat("TTL TIME", String(d?.timeElapsed?.displayValue || "\u2014")) + (sc ? `<span class="dv-score"><span class="dv-score-t">${logoImg(g.away, "dv-score-logo")}<b>${sc.away}</b></span><span class="dv-score-t">${logoImg(g.home, "dv-score-logo")}<b>${sc.home}</b></span></span>` : "") + `<svg class="drive-chev" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 9l6 6 6-6"/></svg></div>${body}</button>`;
+    return `<button type="button" class="drive-card${w.current ? " current" : ""}${open ? " open" : ""}${playsAnimate ? " rise-in" : ""}" data-drive="${w.key}" style="--i:${idx}"><div class="drive-head">` + (team ? logoImg(team, "drive-logo") : "") + `<span class="dv-result">${escapeHtml(result)}</span>` + stat("PLAYS", String(realPlayCount(d))) + stat("YDS", String(d?.yards ?? "\u2014")) + stat("TTL TIME", String(d?.timeElapsed?.displayValue || "\u2014")) + (sc ? `<span class="dv-score"><span class="dv-score-t">${logoImg(g.away, "dv-score-logo")}<b>${sc.away}</b></span><span class="dv-score-t">${logoImg(g.home, "dv-score-logo")}<b>${sc.home}</b></span></span>` : "") + `<svg class="drive-chev" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 9l6 6 6-6"/></svg></div>${body}</button>`;
   }).join("");
 }
 function renderPlaysTab() {

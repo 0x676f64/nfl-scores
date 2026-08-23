@@ -122,7 +122,8 @@ body.scorebug {
   /* Red frame lives here, not on the body, so it wraps the full scrollable
      content instead of being clipped to the viewport-height scroll container.
      The body's rounded overflow clips these corners to match the card. */
-  border: 6px solid var(--accent);
+  /* Border removed per Joe (was a 6px accent frame); the navy bands at top
+     and bottom now give the app its edges. */
   border-radius: var(--radius-xl);
   display: flex;
   flex-direction: column;
@@ -181,7 +182,7 @@ body.scorebug {
   flex-shrink: 0;
 }
 .tab-bar {
-  background: var(--bg-card);
+  background: var(--nfl-navy);
 }
 
 /* Tab panels: only one shown at a time */
@@ -223,12 +224,18 @@ body.scorebug {
   flex-direction: column;
   align-items: center;
   gap: 1px;
-  padding-bottom: var(--space-xs);
-  border-bottom: 1px solid var(--border-subtle);
+  /* Escape .scorebug-top's padding so the navy runs edge-to-edge and flush
+     to the very top — no white gutter around the band. */
+  margin: calc(-1 * var(--space-base)) calc(-1 * var(--space-lg)) 0;
+  padding: calc(var(--space-base) + 4px) var(--space-lg) 9px;
+  border-bottom: none;
+  background: var(--nfl-navy);
 }
+/* everything inside the navy band reads pure white */
+.meta-strip, .meta-strip * { color: #fff; }
 
 .venue {
-  color: var(--text-primary);
+  color: #fff; /* sits on the navy band */
   font-family: var(--font-display);
   font-weight: 700;
   font-size: 13px;
@@ -254,8 +261,8 @@ body.scorebug {
   font-size: 9px;
   font-weight: 600;
   letter-spacing: 0.12em;
-  color: var(--accent);
-  background: rgba(213, 10, 10, 0.12);
+  color: #fff;
+  background: rgba(255, 255, 255, 0.16);
   border: 1px solid rgba(213, 10, 10, 0.3);
   padding: 2px 8px;
   border-radius: var(--radius-sm);
@@ -280,12 +287,10 @@ body.scorebug {
 }
 
 .team-logo {
-  /* Fluid: shrinks on narrow iPhones (was a fixed 84px, which overflowed the
-     score row and clipped), caps at the original size on roomy screens. */
-  /* MLB-app parity: 96px hero logos on roomy screens, fluid floor on
-     small phones so they never overflow the score row. */
-  width: clamp(52px, 19vw, 96px);
-  height: clamp(52px, 19vw, 96px);
+  /* State-driven sizing in RELATIVE units (rem caps, vw fluid midband):
+     default ~50, live ~60, final ~80, pregame ~90 equivalents. */
+  width: clamp(2.4rem, 13vw, 3.125rem);
+  height: clamp(2.4rem, 13vw, 3.125rem);
   object-fit: contain;
   flex-shrink: 0;
   filter: drop-shadow(0 3px 8px rgba(0, 0, 0, 0.28));
@@ -952,6 +957,9 @@ body.is-pregame .status-block {
 }
 
 .bs-team-tab.active { color: var(--text-primary); }
+.bs-team-tabs { background: var(--nfl-navy); border-radius: 999px; padding: 3px; }
+.bs-team-tabs .bs-team-tab { color: rgba(234, 241, 249, 0.6); }
+.bs-team-tabs .bs-team-tab.active { color: #fff; }
 
 .bs-team-tab::after {
   content: '';
@@ -1206,7 +1214,7 @@ body.is-pregame .status-block {
   /* No top border here: content scrolls underneath this sticky bar, so a border
      reads as a false "end of page" — invisible on navy, obvious on white. The
      sticky header carries no bottom border either, so both edges stay seamless. */
-  background: var(--bg-card);
+  background: var(--nfl-navy);
 }
 
 .tab {
@@ -1243,10 +1251,13 @@ body.is-pregame .status-block {
   letter-spacing: 0.1em;
 }
 
+.tab { color: #fff; }
 .tab:hover,
 .tab.tab-active {
-  color: var(--accent);
+  /* Joe's spec: rgb(255,125,156) at 50% — a light red */
+  color: rgba(255, 125, 156, 0.5);
 }
+.tab.tab-active { color: rgba(255, 125, 156, 0.78); } /* active a touch firmer so it reads as selected */
 
 /* Tactile press feedback (iOS-style): the button dips slightly on tap. */
 .tab:active { transform: scale(0.92); }
@@ -2211,8 +2222,8 @@ body.is-inline #inline-pager.pager-active { display: flex; }
   min-width: 210px;
   margin: 9px auto 11px;
   padding: 3px;
-  background: var(--bg-elev-1, rgba(255, 255, 255, 0.06));
-  border: 1px solid var(--border-subtle);
+  background: var(--nfl-navy);
+  border: 1px solid var(--nfl-navy);
   border-radius: 999px;
 }
 .plays-toggle-thumb {
@@ -2239,7 +2250,7 @@ body.is-inline #inline-pager.pager-active { display: flex; }
   font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.03em;
-  color: var(--text-muted);
+  color: rgba(234, 241, 249, 0.6);
   transition: color 0.25s ease;
   -webkit-tap-highlight-color: transparent;
   white-space: nowrap;
@@ -2885,10 +2896,39 @@ body.is-pregame .linescore {
   width: 100%;
 }
 @media (min-width: 700px) {
-  /* Roomier screens: bigger marks, bigger presence, wash spreads further */
-  .team-logo { width: 116px; height: 116px; }
+  /* Roomier screens: wash spreads further (sizes are state-driven) */
   .team-logo::before { inset: -16% -34%; opacity: 0.34; }
   :root:not([data-theme="light"]) .team-logo::before { opacity: 0.25; }
   .team-record { font-size: 13px; }
   .status-score { font-size: 56px; }
+}
+
+:root { --nfl-navy: #041e42; }
+body.is-live.on-game-tab .team-logo { width: clamp(2.8rem, 15vw, 3.75rem); height: clamp(2.8rem, 15vw, 3.75rem); }
+body.is-final .team-logo { width: clamp(3.4rem, 18vw, 5rem); height: clamp(3.4rem, 18vw, 5rem); }
+body.is-pregame .team-logo { width: clamp(3.6rem, 20vw, 5.625rem); height: clamp(3.6rem, 20vw, 5.625rem); }
+/* size changes glide instead of snapping when the phase flips */
+.team-logo { transition: width .45s var(--ease-out), height .45s var(--ease-out); }
+
+/* tab switches animate: the incoming panel fades + rises */
+@keyframes tab-panel-in {
+  from { opacity: 0; transform: translateY(9px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.tab-content.tab-content-active { animation: tab-panel-in 0.3s var(--ease-out); }
+@media (prefers-reduced-motion: reduce) {
+  .tab-content.tab-content-active { animation: none; }
+  .team-logo { transition: none; }
+}
+
+/* ── wrap gap fix: in FINAL phase the pane doesn't stretch, so the bottom
+   bar tucks up under the content instead of floating a screen away. The
+   card ends at the bar. (Inline mode keeps its own fixed-height layout.) ── */
+body.is-final:not(.is-inline) .tab-content.tab-content-active { flex: 0 0 auto; }
+body.is-final:not(.is-inline) #scorebug-content { min-height: auto; }
+
+/* ── dark mode: bands merge into the card for a uniform dark app ────── */
+:root:not([data-theme="light"]) .meta-strip,
+:root:not([data-theme="light"]) .tab-bar {
+  background: var(--bg-card);
 }
