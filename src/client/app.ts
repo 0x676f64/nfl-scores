@@ -185,9 +185,10 @@ function scheduleInlinePagerSync(): void {
 }
 
 function inlinePagerRegion(): HTMLElement | null {
-  const active = document.querySelector(".tab-content.tab-content-active") as HTMLElement | null;
-  if (!active) return null;
-  return (active.querySelector(".bs-panel-wrap") as HTMLElement | null) || active;
+  // The WHOLE active pane pages. (The old .bs-panel-wrap preference predated
+  // the stats redesign — the toggle/compare/leaders now live OUTSIDE that
+  // wrap, so paging only the wrap scrolled an empty box: Joe's dead button.)
+  return document.querySelector(".tab-content.tab-content-active") as HTMLElement | null;
 }
 
 function updateInlinePager(): void {
@@ -588,6 +589,22 @@ const TEAM_COLORS_DUAL: Record<string, [string, string]> = {
   "33": ["#6e56cf", "#241773"], // BAL purple (brighter in dark)
   "34": ["#c41e3a", "#c41e3a"], // HOU: deep steel -> battle red
 };
+// Bold stat numerals need CONTRAST, not brand cleverness: in light mode use
+// the team's dark primary (payload color — navy is fine here per Joe), with a
+// luminance floor so pale primaries (silver, gold) fall to deep navy ink; in
+// dark mode the bright rail colors already read well.
+function statInkOf(t: NormTeam, fallback: string): string {
+  const theme = document.documentElement.getAttribute("data-theme");
+  if (theme !== "light") return railColorOf(t, fallback);
+  const hex = (t.color || "").replace(/^#?/, "#");
+  if (/^#[0-9a-f]{6}$/i.test(hex)) {
+    const r = parseInt(hex.slice(1, 3), 16), gr = parseInt(hex.slice(3, 5), 16), b = parseInt(hex.slice(5, 7), 16);
+    const lum = 0.2126 * r + 0.7152 * gr + 0.0722 * b;
+    if (lum < 150) return hex; // dark enough to carry a bold numeral on ice
+  }
+  return "#0d1f38"; // deep navy ink fallback
+}
+
 function railColorOf(t: NormTeam, fallback: string): string {
   const dual = TEAM_COLORS_DUAL[t.id];
   if (dual) {
@@ -1406,7 +1423,9 @@ function renderLinescore(g: NormGame): void {
       cells += `<td class="${cls}"${style}>${has ? v : "–"}</td>`;
     }
     cells += `<td class="ls-total ls-r-value ${t.score === 0 ? "ls-zero" : "ls-nonzero"}">${t.score}</td>`;
-    return `<tr class="${loser ? "ls-row-loser" : ""}">${cells}</tr>`;
+    // No loser dimming: light mode needs all the color it can get (Joe).
+    // The bold totals tell the story on their own.
+    return `<tr>${cells}</tr>`;
   };
 
   const final = g.phase === "post" && !isPostponedName(g.statusName);
@@ -1554,7 +1573,7 @@ function buildTopPerformers(g: NormGame): string {
   let out = `<div class="tp-hdr">TOP PERFORMERS</div><div class="tp-grid">`;
   cards.forEach((c, i) => {
     const p = c.p!;
-    const color = railColorOf(p.team, p.team.id === g.home.id ? "#013369" : "#d50a0a");
+    const color = statInkOf(p.team, p.team.id === g.home.id ? "#013369" : "#d50a0a");
     out += `<div class="tp-card rise-in" style="--i:${i};--tc:${color}">` +
       `<div class="tp-cat">${escapeHtml(c.label)}</div>` +
       `<div class="tp-row">` +
@@ -1724,7 +1743,8 @@ function renderStatsTab(): void {
   const root = $("tab-box");
   if (!g || !root) return;
 
-  let html = `<div class="plays-toggle" id="stats-toggle" data-active="${statsView}">` +
+  let html = `<div class="plays-toggle" id="stats-toggle" data-active="${statsView}" style="--seg-i:${statsView === "players" ? 1 : 0}">` +
+    `<span class="plays-toggle-thumb"></span>` +
     `<button class="plays-seg${statsView === "team" ? " is-active" : ""}" data-stats="team" type="button">Team</button>` +
     `<button class="plays-seg${statsView === "players" ? " is-active" : ""}" data-stats="players" type="button">Players</button></div>`;
 
@@ -1837,19 +1857,69 @@ function playEntryHtml(p: any, color: string): string {
     `${clk || boldSuffix ? " — " : ""}${escapeHtml(text)}</div></div>`;
 }
 
+function ordinalQuarter(period: number): string {
+  if (period >= 5) return period === 5 ? "OVERTIME" : `${period - 4}OT`;
+  const ord = ["", "1ST", "2ND", "3RD", "4TH"][period] || `${period}TH`;
+  return `${ord} QUARTER`;
+}
+
+// playId -> containing drive, for the "7 plays, 79 yards, 3:48" line.
+function driveOfPlay(playId: string): any | null {
+  const s = lastSummary || {};
+  const all: any[] = [...(s.drives?.previous || [])];
+  if (s.drives?.current) all.push(s.drives.current);
+  for (const d of all) {
+    if ((d?.plays || []).some((p: any) => String(p?.id) === playId)) return d;
+  }
+  return null;
+}
+
+// ESPN-style scoring cards (Joe's ref): quarter section headers, then per
+// play: logo | bold type + clock | away/home running-score columns with the
+// SCORING team's total emphasized; description; drive summary line.
 function buildScoringCards(_compact: boolean): string {
   const g = lastGame;
   const sp: any[] = lastSummary?.scoringPlays || [];
   if (!g || !sp.length) return '<div class="plays-empty">No scoring plays yet</div>';
-  return [...sp].reverse().map((p: any, i: number) => {
+  let html = "";
+  let lastPeriod = -1;
+  let i = 0;
+  for (const p of sp) {
+    const period = Number(p?.period?.number ?? p?.period) || 0;
+    if (period !== lastPeriod) {
+      html += `<div class="sc-qtr${playsAnimate ? " rise-in" : ""}" style="--i:${i}">${escapeHtml(ordinalQuarter(period))}</div>`;
+      lastPeriod = period;
+      i++;
+    }
     const teamId = p?.team?.id != null ? String(p.team.id) : "";
-    const team = teamId === g.home.id ? g.home : g.away;
-    const color = railColorOf(team, teamId === g.home.id ? "#013369" : "#d50a0a");
-    const scoreline = `${escapeHtml(g.away.abbr)} ${Number(p?.awayScore) || 0} — ${escapeHtml(g.home.abbr)} ${Number(p?.homeScore) || 0}`;
-    return `<div class="dp-card${playsAnimate ? " rise-in" : ""}" style="--i:${i}">` +
-      playEntryHtml(p, color) +
-      `<div class="dp-score">${scoreline}</div></div>`;
-  }).join("");
+    const isHome = teamId === g.home.id;
+    const team = isHome ? g.home : g.away;
+    const color = railColorOf(team, isHome ? "#013369" : "#d50a0a");
+    const typeName = String(p?.scoringType?.displayName || p?.type?.text || "Score");
+    const clock = `${escapeHtml(String(p?.clock?.displayValue || ""))} - ${escapeHtml(String(period <= 4 ? ["","1st","2nd","3rd","4th"][period] : "OT"))}`;
+    const away = Number(p?.awayScore) || 0, home = Number(p?.homeScore) || 0;
+    const drive = driveOfPlay(String(p?.id));
+    const dPlays = drive ? realPlayCount(drive) : 0;
+    const dYards = drive?.yards;
+    const dTime = drive?.timeElapsed?.displayValue;
+    const driveLine = drive && (dPlays || dYards != null)
+      ? `<div class="sc-drive">${dPlays} plays${dYards != null ? `, ${escapeHtml(String(dYards))} yards` : ""}${dTime ? `, ${escapeHtml(String(dTime))}` : ""}</div>`
+      : "";
+    html += `<div class="sc-card${playsAnimate ? " rise-in" : ""}" style="--i:${i};--tc:${color}">` +
+      `<div class="sc-top">` +
+        logoImg(team, "sc-logo") +
+        `<div class="sc-title-wrap"><div class="sc-type">${escapeHtml(typeName)}</div><div class="sc-clock">${clock}</div></div>` +
+        `<div class="sc-scores">` +
+          `<div class="sc-col${!isHome ? " sc-col-scored" : ""}"><span class="sc-num">${away}</span><span class="sc-abbr">${escapeHtml(g.away.abbr)}</span></div>` +
+          `<div class="sc-col${isHome ? " sc-col-scored" : ""}"><span class="sc-num">${home}</span><span class="sc-abbr">${escapeHtml(g.home.abbr)}</span></div>` +
+        `</div>` +
+      `</div>` +
+      `<div class="sc-desc">${escapeHtml(String(p?.text || ""))}</div>` +
+      driveLine +
+      `</div>`;
+    i++;
+  }
+  return html;
 }
 
 function driveScores(d: any): { away: number; home: number } | null {
@@ -1929,6 +1999,8 @@ function setPlaysView(which: "scoring" | "all"): void {
   toggle.setAttribute("data-active", which);
   toggle.querySelectorAll<HTMLElement>(".plays-seg").forEach((seg) => {
     seg.classList.toggle("is-active", seg.getAttribute("data-plays") === which);
+    const track = seg.closest<HTMLElement>(".plays-toggle");
+    if (track) track.style.setProperty("--seg-i", which === "all" ? "1" : "0");
   });
   const show = which === "all" ? allList : scoringList;
   const hide = which === "all" ? scoringList : allList;
@@ -1974,9 +2046,17 @@ async function loadClipsInto(containerId: string): Promise<void> {
   el.className = "clips-grid";
   el.innerHTML = clips.slice(0, 8).map((c: any) =>
     `<button class="clip-card" type="button" data-url="${escapeHtml(String(c.url || ""))}">` +
-    (c.thumbnail ? `<img data-psrc="${escapeHtml(proxied(String(c.thumbnail)))}" alt="">` : "") +
+    // Every card gets the same 16/9 media panel: real thumb when we have
+    // one, play-glyph placeholder when we don't — uniform grid either way.
+    `<div class="clip-media">` +
+      (c.thumbnail ? `<img data-psrc="${escapeHtml(proxied(String(c.thumbnail)))}" alt="">` : "") +
+      `<span class="clip-play">▶</span>` +
+    `</div>` +
     `<div class="chead">${escapeHtml(String(c.headline || "Highlight"))}</div></button>`
   ).join("");
+  // THE missing line — this grid was never hydrated, so data-psrc thumbs
+  // stayed src-less grey boxes forever (stats and wrap always had this call).
+  hydrateProxiedImages(el);
   el.querySelectorAll<HTMLElement>(".clip-card[data-url]").forEach((card) => {
     card.addEventListener("click", () => {
       const url = card.getAttribute("data-url");
@@ -2284,7 +2364,8 @@ async function loadStandingsView(): Promise<void> {
   if (!body) return;
   body.innerHTML = '<div class="stand-msg">Loading…</div>';
   try {
-    const seg = `<div class="plays-toggle stand-view-toggle">` +
+    const seg = `<div class="plays-toggle stand-view-toggle" style="--seg-i:${standView === "bracket" ? 1 : 0}">` +
+      `<span class="plays-toggle-thumb"></span>` +
       `<button class="plays-seg${standView === "standings" ? " is-active" : ""}" data-sv="standings" type="button">Standings</button>` +
       `<button class="plays-seg${standView === "bracket" ? " is-active" : ""}" data-sv="bracket" type="button">Bracket</button></div>`;
 

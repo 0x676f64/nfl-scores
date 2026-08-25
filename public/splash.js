@@ -496,9 +496,7 @@ function scheduleInlinePagerSync() {
   });
 }
 function inlinePagerRegion() {
-  const active = document.querySelector(".tab-content.tab-content-active");
-  if (!active) return null;
-  return active.querySelector(".bs-panel-wrap") || active;
+  return document.querySelector(".tab-content.tab-content-active");
 }
 function updateInlinePager() {
   const pager = document.getElementById("inline-pager");
@@ -926,6 +924,17 @@ var TEAM_COLORS_DUAL = {
   "34": ["#c41e3a", "#c41e3a"]
   // HOU: deep steel -> battle red
 };
+function statInkOf(t, fallback) {
+  const theme = document.documentElement.getAttribute("data-theme");
+  if (theme !== "light") return railColorOf(t, fallback);
+  const hex = (t.color || "").replace(/^#?/, "#");
+  if (/^#[0-9a-f]{6}$/i.test(hex)) {
+    const r = parseInt(hex.slice(1, 3), 16), gr = parseInt(hex.slice(3, 5), 16), b = parseInt(hex.slice(5, 7), 16);
+    const lum = 0.2126 * r + 0.7152 * gr + 0.0722 * b;
+    if (lum < 150) return hex;
+  }
+  return "#0d1f38";
+}
 function railColorOf(t, fallback) {
   const dual = TEAM_COLORS_DUAL[t.id];
   if (dual) {
@@ -1563,7 +1572,7 @@ function renderLinescore(g) {
       cells += `<td class="${cls}"${style}>${has ? v : "\u2013"}</td>`;
     }
     cells += `<td class="ls-total ls-r-value ${t.score === 0 ? "ls-zero" : "ls-nonzero"}">${t.score}</td>`;
-    return `<tr class="${loser ? "ls-row-loser" : ""}">${cells}</tr>`;
+    return `<tr>${cells}</tr>`;
   };
   const final = g.phase === "post" && !isPostponedName(g.statusName);
   el.innerHTML = `<table class="linescore-compact"><thead><tr>${header}</tr></thead><tbody>` + row(g.away, final && g.home.score > g.away.score) + row(g.home, final && g.away.score > g.home.score) + "</tbody></table>";
@@ -1693,7 +1702,7 @@ function buildTopPerformers(g) {
   let out = `<div class="tp-hdr">TOP PERFORMERS</div><div class="tp-grid">`;
   cards.forEach((c, i) => {
     const p = c.p;
-    const color = railColorOf(p.team, p.team.id === g.home.id ? "#013369" : "#d50a0a");
+    const color = statInkOf(p.team, p.team.id === g.home.id ? "#013369" : "#d50a0a");
     out += `<div class="tp-card rise-in" style="--i:${i};--tc:${color}"><div class="tp-cat">${escapeHtml(c.label)}</div><div class="tp-row">` + (p.head ? `<img class="tp-head" data-psrc="${escapeHtml(p.head)}" alt="">` : `<span class="tp-head ph"></span>`) + `<span class="tp-name">${escapeHtml(p.name)}</span></div><div class="tp-big">${escapeHtml(p.big)}<small>${escapeHtml(p.unit)}</small></div>` + (p.sub ? `<div class="tp-sub">${escapeHtml(p.sub)}</div>` : "") + `</div>`;
   });
   return out + "</div>";
@@ -1832,7 +1841,7 @@ function renderStatsTab() {
   const g = lastGame;
   const root = $("tab-box");
   if (!g || !root) return;
-  let html = `<div class="plays-toggle" id="stats-toggle" data-active="${statsView}"><button class="plays-seg${statsView === "team" ? " is-active" : ""}" data-stats="team" type="button">Team</button><button class="plays-seg${statsView === "players" ? " is-active" : ""}" data-stats="players" type="button">Players</button></div>`;
+  let html = `<div class="plays-toggle" id="stats-toggle" data-active="${statsView}" style="--seg-i:${statsView === "players" ? 1 : 0}"><span class="plays-toggle-thumb"></span><button class="plays-seg${statsView === "team" ? " is-active" : ""}" data-stats="team" type="button">Team</button><button class="plays-seg${statsView === "players" ? " is-active" : ""}" data-stats="players" type="button">Players</button></div>`;
   if (statsView === "team") {
     html += `<div class="ts-wrap">${buildTeamCompare(g)}</div>`;
   } else {
@@ -1927,17 +1936,50 @@ function playEntryHtml(p, color) {
   const clk = `${p?.clock?.displayValue || ""} ${periodLc(Number(p?.period?.number) || 0)}`.trim();
   return `<div class="dp-entry" style="--rail:${color}"><div class="dp-title">${playIcon(playTypeText(p))}<b>${escapeHtml(title)}</b>` + (dd ? `<span class="dp-dd"> \xB7 ${escapeHtml(dd)}</span>` : "") + `</div><div class="dp-body"><b>${escapeHtml(clk)}${escapeHtml(boldSuffix)}</b>${clk || boldSuffix ? " \u2014 " : ""}${escapeHtml(text)}</div></div>`;
 }
+function ordinalQuarter(period) {
+  if (period >= 5) return period === 5 ? "OVERTIME" : `${period - 4}OT`;
+  const ord = ["", "1ST", "2ND", "3RD", "4TH"][period] || `${period}TH`;
+  return `${ord} QUARTER`;
+}
+function driveOfPlay(playId) {
+  const s = lastSummary || {};
+  const all = [...s.drives?.previous || []];
+  if (s.drives?.current) all.push(s.drives.current);
+  for (const d of all) {
+    if ((d?.plays || []).some((p) => String(p?.id) === playId)) return d;
+  }
+  return null;
+}
 function buildScoringCards(_compact) {
   const g = lastGame;
   const sp = lastSummary?.scoringPlays || [];
   if (!g || !sp.length) return '<div class="plays-empty">No scoring plays yet</div>';
-  return [...sp].reverse().map((p, i) => {
+  let html = "";
+  let lastPeriod = -1;
+  let i = 0;
+  for (const p of sp) {
+    const period = Number(p?.period?.number ?? p?.period) || 0;
+    if (period !== lastPeriod) {
+      html += `<div class="sc-qtr${playsAnimate ? " rise-in" : ""}" style="--i:${i}">${escapeHtml(ordinalQuarter(period))}</div>`;
+      lastPeriod = period;
+      i++;
+    }
     const teamId = p?.team?.id != null ? String(p.team.id) : "";
-    const team = teamId === g.home.id ? g.home : g.away;
-    const color = railColorOf(team, teamId === g.home.id ? "#013369" : "#d50a0a");
-    const scoreline = `${escapeHtml(g.away.abbr)} ${Number(p?.awayScore) || 0} \u2014 ${escapeHtml(g.home.abbr)} ${Number(p?.homeScore) || 0}`;
-    return `<div class="dp-card${playsAnimate ? " rise-in" : ""}" style="--i:${i}">` + playEntryHtml(p, color) + `<div class="dp-score">${scoreline}</div></div>`;
-  }).join("");
+    const isHome = teamId === g.home.id;
+    const team = isHome ? g.home : g.away;
+    const color = railColorOf(team, isHome ? "#013369" : "#d50a0a");
+    const typeName = String(p?.scoringType?.displayName || p?.type?.text || "Score");
+    const clock = `${escapeHtml(String(p?.clock?.displayValue || ""))} - ${escapeHtml(String(period <= 4 ? ["", "1st", "2nd", "3rd", "4th"][period] : "OT"))}`;
+    const away = Number(p?.awayScore) || 0, home = Number(p?.homeScore) || 0;
+    const drive = driveOfPlay(String(p?.id));
+    const dPlays = drive ? realPlayCount(drive) : 0;
+    const dYards = drive?.yards;
+    const dTime = drive?.timeElapsed?.displayValue;
+    const driveLine = drive && (dPlays || dYards != null) ? `<div class="sc-drive">${dPlays} plays${dYards != null ? `, ${escapeHtml(String(dYards))} yards` : ""}${dTime ? `, ${escapeHtml(String(dTime))}` : ""}</div>` : "";
+    html += `<div class="sc-card${playsAnimate ? " rise-in" : ""}" style="--i:${i};--tc:${color}"><div class="sc-top">` + logoImg(team, "sc-logo") + `<div class="sc-title-wrap"><div class="sc-type">${escapeHtml(typeName)}</div><div class="sc-clock">${clock}</div></div><div class="sc-scores"><div class="sc-col${!isHome ? " sc-col-scored" : ""}"><span class="sc-num">${away}</span><span class="sc-abbr">${escapeHtml(g.away.abbr)}</span></div><div class="sc-col${isHome ? " sc-col-scored" : ""}"><span class="sc-num">${home}</span><span class="sc-abbr">${escapeHtml(g.home.abbr)}</span></div></div></div><div class="sc-desc">${escapeHtml(String(p?.text || ""))}</div>` + driveLine + `</div>`;
+    i++;
+  }
+  return html;
 }
 function driveScores(d) {
   const plays = d?.plays || [];
@@ -1998,6 +2040,8 @@ function setPlaysView(which) {
   toggle.setAttribute("data-active", which);
   toggle.querySelectorAll(".plays-seg").forEach((seg) => {
     seg.classList.toggle("is-active", seg.getAttribute("data-plays") === which);
+    const track = seg.closest(".plays-toggle");
+    if (track) track.style.setProperty("--seg-i", which === "all" ? "1" : "0");
   });
   const show = which === "all" ? allList : scoringList;
   const hide = which === "all" ? scoringList : allList;
@@ -2042,8 +2086,9 @@ async function loadClipsInto(containerId) {
   }
   el.className = "clips-grid";
   el.innerHTML = clips.slice(0, 8).map(
-    (c) => `<button class="clip-card" type="button" data-url="${escapeHtml(String(c.url || ""))}">` + (c.thumbnail ? `<img data-psrc="${escapeHtml(proxied(String(c.thumbnail)))}" alt="">` : "") + `<div class="chead">${escapeHtml(String(c.headline || "Highlight"))}</div></button>`
+    (c) => `<button class="clip-card" type="button" data-url="${escapeHtml(String(c.url || ""))}"><div class="clip-media">` + (c.thumbnail ? `<img data-psrc="${escapeHtml(proxied(String(c.thumbnail)))}" alt="">` : "") + `<span class="clip-play">\u25B6</span></div><div class="chead">${escapeHtml(String(c.headline || "Highlight"))}</div></button>`
   ).join("");
+  hydrateProxiedImages(el);
   el.querySelectorAll(".clip-card[data-url]").forEach((card) => {
     card.addEventListener("click", () => {
       const url = card.getAttribute("data-url");
@@ -2338,7 +2383,7 @@ async function loadStandingsView() {
   if (!body) return;
   body.innerHTML = '<div class="stand-msg">Loading\u2026</div>';
   try {
-    const seg = `<div class="plays-toggle stand-view-toggle"><button class="plays-seg${standView === "standings" ? " is-active" : ""}" data-sv="standings" type="button">Standings</button><button class="plays-seg${standView === "bracket" ? " is-active" : ""}" data-sv="bracket" type="button">Bracket</button></div>`;
+    const seg = `<div class="plays-toggle stand-view-toggle" style="--seg-i:${standView === "bracket" ? 1 : 0}"><span class="plays-toggle-thumb"></span><button class="plays-seg${standView === "standings" ? " is-active" : ""}" data-sv="standings" type="button">Standings</button><button class="plays-seg${standView === "bracket" ? " is-active" : ""}" data-sv="bracket" type="button">Bracket</button></div>`;
     if (standView === "bracket") {
       body.innerHTML = seg + buildBracketHtml(standActiveLeague);
     } else {
