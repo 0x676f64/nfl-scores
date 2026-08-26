@@ -65,6 +65,7 @@ body.scorebug {
   color: var(--text-primary);
   border-radius: var(--radius-xl);
   font-family: var(--font-sans);
+  font-style: normal;
   font-size: 14px;
   line-height: 1.45;
   /* No box-shadow on the body: the body is exactly one viewport tall (height:
@@ -2917,9 +2918,10 @@ body.is-pregame .linescore {
 :root { --nfl-navy: #041e42; }
 body.is-live.on-game-tab .team-logo { width: clamp(2.8rem, 15vw, 3.75rem); height: clamp(2.8rem, 15vw, 3.75rem); }
 body.is-final .team-logo { width: clamp(3.4rem, 18vw, 5rem); height: clamp(3.4rem, 18vw, 5rem); }
-body.is-pregame .team-logo { width: clamp(3.6rem, 20vw, 5.625rem); height: clamp(3.6rem, 20vw, 5.625rem); }
+body.is-pregame .team-logo { width: clamp(3.5rem, 21vw, 5.3125rem); height: clamp(3.5rem, 21vw, 5.3125rem); }
 /* size changes glide instead of snapping when the phase flips */
-.team-logo { transition: width .45s var(--ease-out), height .45s var(--ease-out); }
+/* snappy, matching the toggle feel (Joe) */
+.team-logo { transition: width .26s cubic-bezier(.3,1.25,.55,1), height .26s cubic-bezier(.3,1.25,.55,1); }
 
 /* tab switches animate: the incoming panel fades + rises */
 @keyframes tab-panel-in {
@@ -3002,3 +3004,126 @@ body.is-final .linescore-compact td.ls-inning, body.is-final .linescore-compact 
 }
 .sc-drive { font-family: var(--font-mono); font-size: 9.5px; color: var(--text-muted); margin-top: 5px; }
 @media (min-width: 700px) { .sc-type { font-size: 16px; } .sc-num { font-size: 21px; } }
+
+/* ── PREGAME redesign ───────────────────────────────────────────────── */
+/* (pregame hero removed — the header score-row logos are the only set) */
+
+/* LOCATION / STADIUM: labeled rows, big Rubik italic values (Joe's ref) */
+.pg-place { max-width: 460px; margin: 10px auto 0; padding: 0 10px; display: grid; gap: 13px; }
+.pg-place-k {
+  display: flex; align-items: center; gap: 5px;
+  font-family: var(--font-mono); font-size: 10.5px; font-weight: 700;
+  letter-spacing: .12em; color: var(--text-muted); text-transform: uppercase;
+}
+.pg-place-k svg { flex: 0 0 auto; }
+.pg-place-v {
+  font-family: "Rubik", var(--font-sans); font-style: italic; font-weight: 800;
+  font-size: clamp(21px, 6.4vw, 28px); line-height: 1.12; color: var(--text-primary);
+  letter-spacing: -.015em; margin-top: 3px;
+}
+
+/* betting line */
+.pg-sec-hdr {
+  font-family: var(--font-display); font-weight: 700; font-size: 11px;
+  letter-spacing: .14em; color: var(--text-secondary); text-align: center;
+  margin: 14px 0 6px;
+}
+.pg-prov { font-family: var(--font-mono); font-size: 9px; letter-spacing: .06em; color: var(--text-muted); }
+.pg-odds-grid {
+  display: grid; grid-template-columns: repeat(2, 1fr); gap: 7px;
+  max-width: 460px; margin: 0 auto; padding: 0 10px;
+}
+.pg-odd {
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
+  background: var(--bg-elev-1); border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md); padding: 9px 6px 8px;
+}
+/* the two headline numbers get a solid navy fill and heavy type */
+.pg-odd-fill {
+  background: var(--nfl-navy); border-color: var(--nfl-navy);
+}
+/* dark mode: navy-on-navy reads as nothing — lift the tile off the card
+   instead (Joe: the blue doesn't mesh with the dark scheme) */
+:root:not([data-theme="light"]) .pg-odd-fill {
+  background: var(--bg-elev-2);
+  border-color: rgba(255, 255, 255, 0.14);
+}
+:root:not([data-theme="light"]) .pg-odd-fill .pg-odd-k { color: var(--text-muted); }
+:root:not([data-theme="light"]) .pg-odd-fill .pg-odd-v { color: #fff; }
+.pg-odd-fill .pg-odd-k { color: rgba(255, 255, 255, 0.78); font-weight: 700; }
+.pg-odd-fill .pg-odd-v { color: #fff; font-size: 27px; }
+.pg-odd-k { font-family: var(--font-mono); font-size: 9px; font-weight: 700; letter-spacing: .1em; color: var(--text-muted); }
+.pg-odd-v { font-family: var(--font-display); font-weight: 800; font-size: 21px; color: var(--text-primary); line-height: 1.05; }
+
+/* injury report: tap-to-open panels */
+.pg-inj-wrap { display: grid; gap: 8px; max-width: 460px; margin: 14px auto 4px; padding: 0 8px; }
+.pg-inj-card {
+  /* LIGHT MODE: the whole card is the team's colorful hue (logos carry their
+     own outline, so they hold up on it). DARK MODE: transparent so the navy
+     shows through — Joe's spec. */
+  border: 1px solid var(--tc); border-radius: var(--radius-md);
+  background: var(--tc); overflow: hidden;
+}
+:root:not([data-theme="light"]) .pg-inj-card {
+  background: transparent; border-color: rgba(255, 255, 255, 0.16);
+  border-left: 3px solid var(--tc);
+}
+.pg-inj-btn {
+  display: flex; align-items: center; gap: 9px; width: 100%;
+  padding: 9px 11px; background: transparent; border: none; cursor: pointer;
+  color: inherit; text-align: left; -webkit-tap-highlight-color: transparent;
+  transition: background .15s ease;
+}
+.pg-inj-btn:hover { background: rgba(255, 255, 255, 0.12); }
+:root:not([data-theme="light"]) .pg-inj-btn:hover { background: var(--bg-elev-2); }
+.pg-inj-btn:active { transform: scale(0.99); }
+.pg-inj-logo { width: 40px; height: 40px; object-fit: contain; flex: 0 0 auto; }
+.pg-inj-label {
+  flex: 1 1 auto; font-family: var(--font-display); font-weight: 700;
+  font-size: 14px; letter-spacing: .06em; color: #fff;
+}
+:root:not([data-theme="light"]) .pg-inj-label { color: var(--text-primary); }
+.pg-inj-count {
+  font-family: var(--font-mono); font-size: 11px; font-weight: 700; color: var(--tc);
+  background: #fff; border-radius: 999px; padding: 1px 7px; min-width: 20px; text-align: center;
+}
+:root:not([data-theme="light"]) .pg-inj-count { color: #fff; background: var(--tc); }
+.pg-inj-chev { color: rgba(255,255,255,.8); transition: transform .18s cubic-bezier(.3,1.3,.55,1); flex: 0 0 auto; }
+:root:not([data-theme="light"]) .pg-inj-chev { color: var(--text-muted); }
+.pg-inj-card.is-open .pg-inj-chev { transform: rotate(180deg); }
+/* snappy open/close */
+.pg-inj-body { display: grid; grid-template-rows: 0fr; transition: grid-template-rows .2s cubic-bezier(.3,1.1,.5,1); }
+.pg-inj-card.is-open .pg-inj-body { grid-template-rows: 1fr; }
+.pg-inj-list { overflow: hidden; min-height: 0; }
+.pg-inj-card.is-open .pg-inj-list { padding: 6px 10px 9px; }
+.pg-inj-list { background: var(--bg-card); }
+:root:not([data-theme="light"]) .pg-inj-list { background: transparent; }
+.pg-inj-row {
+  display: flex; align-items: center; gap: 9px; padding: 6px 2px;
+  border-top: 1px solid var(--border-subtle);
+  animation: injRow .26s var(--ease-out) backwards;
+  animation-delay: calc(var(--i) * 32ms);
+}
+@keyframes injRow { from { opacity: 0; transform: translateX(-6px); } to { opacity: 1; transform: none; } }
+.pg-inj-head {
+  width: 34px; height: 34px; border-radius: 50%; object-fit: cover;
+  background: var(--bg-elev-2); flex: 0 0 auto;
+}
+.pg-inj-who { flex: 1 1 auto; min-width: 0; }
+.pg-inj-name { font-family: var(--font-sans); font-weight: 600; font-size: 12.5px; color: var(--text-primary); }
+.pg-inj-meta { font-family: var(--font-mono); font-size: 9.5px; color: var(--text-muted); margin-top: 1px; }
+.pg-inj-status {
+  font-family: var(--font-display); font-weight: 700; font-size: 9.5px; letter-spacing: .08em;
+  color: #fff; background: var(--sc); border-radius: 4px; padding: 2px 6px; flex: 0 0 auto;
+}
+.pg-inj-none { font-family: var(--font-sans); font-size: 11.5px; color: var(--text-muted); padding: 6px 0 4px; }
+@media (prefers-reduced-motion: reduce) {
+  .pg-inj-body { transition: none; }
+  .pg-inj-row { animation: none; }
+}
+
+/* Rubik is the app's body face; italics are OPT-IN (location/stadium only).
+   The font link must request upright weights too — an italic-only request
+   makes every Rubik face resolve italic app-wide. */
+.tab, .tab span, .status-badge, .game-context, .team-record,
+.pg-odd-k, .pg-odd-v, .pg-place-k { font-style: normal; }

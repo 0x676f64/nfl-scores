@@ -1470,24 +1470,123 @@ function networksOf(g: NormGame): string {
   }).filter(Boolean).join(" · ");
 }
 
+// ── PREGAME (redesigned): hero + odds + tap-to-open injury reports ──────
+const openInjuries = new Set<string>();
+
+function oddsBlockHtml(g: NormGame): string {
+  // PICKCENTER is the populated field (DraftKings); `odds` came back empty in
+  // every sample — prefer pickcenter, fall back to odds if ESPN ever fills it.
+  const list: any[] = (lastSummary?.pickcenter?.length ? lastSummary.pickcenter : lastSummary?.odds) || [];
+  const o: any = list.find((x: any) => x?.details != null || x?.overUnder != null) || list[0];
+  if (!o) return "";
+  const prov = String(o?.provider?.name || "");
+  const spread = String(o?.details || "");
+  const ou = o?.overUnder != null ? String(o.overUnder) : "";
+  const awayMl = o?.awayTeamOdds?.moneyLine, homeMl = o?.homeTeamOdds?.moneyLine;
+  const ml = (v: any) => (v == null ? "—" : (Number(v) > 0 ? `+${v}` : String(v)));
+  return `<div class="pg-odds rise-in" style="--i:1">` +
+    `<div class="pg-sec-hdr">BETTING LINE${prov ? ` <span class="pg-prov">${escapeHtml(prov)}</span>` : ""}</div>` +
+    `<div class="pg-odds-grid">` +
+      `<div class="pg-odd pg-odd-fill"><span class="pg-odd-k">SPREAD</span><span class="pg-odd-v">${escapeHtml(spread || "—")}</span></div>` +
+      `<div class="pg-odd pg-odd-fill"><span class="pg-odd-k">OVER / UNDER</span><span class="pg-odd-v">${escapeHtml(ou || "—")}</span></div>` +
+      `<div class="pg-odd"><span class="pg-odd-k">${escapeHtml(g.away.abbr)} ML</span><span class="pg-odd-v">${escapeHtml(ml(awayMl))}</span></div>` +
+      `<div class="pg-odd"><span class="pg-odd-k">${escapeHtml(g.home.abbr)} ML</span><span class="pg-odd-v">${escapeHtml(ml(homeMl))}</span></div>` +
+    `</div></div>`;
+}
+
+function injuryListHtml(entries: any[], color: string): string {
+  if (!entries.length) return `<div class="pg-inj-none">No reported injuries</div>`;
+  return entries.map((it: any, i: number) => {
+    const a = it?.athlete || {};
+    const head = a?.headshot?.href
+      ? `<img class="pg-inj-head" data-psrc="${escapeHtml(proxied(String(a.headshot.href)))}" alt="">`
+      : `<span class="pg-inj-head ph"></span>`;
+    const pos = String(a?.position?.abbreviation || "");
+    const num = a?.jersey != null ? `#${escapeHtml(String(a.jersey))}` : "";
+    const status = String(it?.status || it?.type?.description || "");
+    return `<div class="pg-inj-row" style="--i:${i}">` +
+      head +
+      `<div class="pg-inj-who"><div class="pg-inj-name">${escapeHtml(String(a?.displayName || "—"))}</div>` +
+      `<div class="pg-inj-meta">${escapeHtml(pos)}${pos && num ? " · " : ""}${num}</div></div>` +
+      `<span class="pg-inj-status" style="--sc:${color}">${escapeHtml(status.toUpperCase())}</span>` +
+      `</div>`;
+  }).join("");
+}
+
+function injuriesFor(teamId: string): any[] {
+  const groups: any[] = lastSummary?.injuries || [];
+  const grp = groups.find((x: any) => String(x?.team?.id) === String(teamId));
+  return (grp?.injuries || []) as any[];
+}
+
+function injuryPanelHtml(g: NormGame, home: boolean): string {
+  const t = home ? g.home : g.away;
+  // railColorOf = the vivid/dual color (Joe's no-blue rule) — this is the
+  // full card fill in light mode, so pick the colorful variant.
+  const color = railColorOf(t, home ? "#013369" : "#d50a0a");
+  const list = injuriesFor(t.id);
+  const key = home ? "home" : "away";
+  const open = openInjuries.has(key);
+  return `<div class="pg-inj-card${open ? " is-open" : ""}" data-inj="${key}" style="--tc:${color}">` +
+    `<button class="pg-inj-btn" type="button" data-inj-btn="${key}">` +
+      logoImg(t, "pg-inj-logo") +
+      `<span class="pg-inj-label">${escapeHtml(t.abbr)} INJURIES</span>` +
+      `<span class="pg-inj-count">${list.length}</span>` +
+      `<svg class="pg-inj-chev" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 9l6 6 6-6"/></svg>` +
+    `</button>` +
+    `<div class="pg-inj-body"><div class="pg-inj-list">${injuryListHtml(list, color)}</div></div>` +
+  `</div>`;
+}
+
+function bindInjuryToggles(root: ParentNode, g: NormGame): void {
+  root.querySelectorAll<HTMLElement>("[data-inj-btn]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const key = btn.getAttribute("data-inj-btn") || "";
+      const card = btn.closest<HTMLElement>(".pg-inj-card");
+      if (!card) return;
+      const nowOpen = !card.classList.contains("is-open");
+      card.classList.toggle("is-open", nowOpen);
+      if (nowOpen) openInjuries.add(key); else openInjuries.delete(key);
+    });
+  });
+  void g;
+}
+
 function renderPregame(g: NormGame): void {
   const body = $("pregame-body");
   if (!body) return;
-  let when = "";
-  try {
-    when = new Date(g.date).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" }).toUpperCase() +
-      "  ·  " + formatGameTime(g.date);
-  } catch { /* ignore */ }
-  const nets = networksOf(g);
-  let html = kvRow("KICKOFF", escapeHtml(when));
-  if (nets) html += kvRow("TV", escapeHtml(nets));
-  if (g.venue?.fullName) {
-    const loc = g.venue.address ? [g.venue.address.city, g.venue.address.state].filter(Boolean).join(", ") : "";
-    html += kvRow("VENUE", escapeHtml(String(g.venue.fullName)) + (loc ? " — " + escapeHtml(loc) : ""));
+  // (no date/TV line here — meta-strip has date+time, TV button has networks)
+  const venue = g.venue?.fullName ? String(g.venue.fullName) : "";
+  const loc = g.venue?.address ? [g.venue.address.city, g.venue.address.state].filter(Boolean).join(", ") : "";
+  const awayColor = railColorOf(g.away, "#d50a0a");
+  const homeColor = railColorOf(g.home, "#013369");
+
+  // NOTE: no logos here — the header score-row already renders them
+  // (state-sized, 85px in pregame). Rendering a second set was duplication.
+  const PIN_ICON = '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s7-5.5 7-11a7 7 0 1 0-14 0c0 5.5 7 11 7 11z"/><circle cx="12" cy="10" r="2.6"/></svg>';
+  const STADIUM_ICON = '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8c0-1.7 4-3 9-3s9 1.3 9 3-4 3-9 3-9-1.3-9-3z"/><path d="M3 8v6c0 1.7 4 3 9 3s9-1.3 9-3V8"/></svg>';
+
+  let html = "";
+  if (loc || venue) {
+    html += `<div class="pg-place rise-in" style="--i:0">`;
+    if (loc) {
+      html += `<div class="pg-place-row"><div class="pg-place-k">${PIN_ICON}<span>LOCATION</span></div>` +
+        `<div class="pg-place-v">${escapeHtml(loc.toUpperCase())}</div></div>`;
+    }
+    if (venue) {
+      html += `<div class="pg-place-row"><div class="pg-place-k">${STADIUM_ICON}<span>STADIUM</span></div>` +
+        `<div class="pg-place-v">${escapeHtml(venue.toUpperCase())}</div></div>`;
+    }
+    html += `</div>`;
   }
-  html += kvRow(escapeHtml(g.away.abbr), escapeHtml(g.away.record || "—"));
-  html += kvRow(escapeHtml(g.home.abbr), escapeHtml(g.home.record || "—"));
+  void awayColor; void homeColor;
+  html += oddsBlockHtml(g);
+  html += `<div class="pg-inj-wrap rise-in" style="--i:2">` +
+    injuryPanelHtml(g, false) + injuryPanelHtml(g, true) + `</div>`;
+
   body.innerHTML = html;
+  bindInjuryToggles(body, g);
+  hydrateProxiedImages(body);
 }
 
 const YDS_RE = /(\d+(?:\.\d+)?)\s*YDS/i;
