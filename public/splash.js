@@ -1598,34 +1598,83 @@ function gameContextLabel(g) {
   if (g.seasonType === 1) return "PRESEASON" + (g.week ? ` \xB7 WEEK ${g.week}` : "");
   return g.week ? `WEEK ${g.week}` : "";
 }
-function kvRow(k, v) {
-  return `<div class="drive-card" style="display:flex;justify-content:space-between;gap:10px;align-items:center"><span class="drive-meta" style="margin:0">${k}</span><span style="font-size:13px;text-align:right">${v}</span></div>`;
+var openInjuries = /* @__PURE__ */ new Set();
+function oddsBlockHtml(g) {
+  const list = (lastSummary?.pickcenter?.length ? lastSummary.pickcenter : lastSummary?.odds) || [];
+  const o = list.find((x) => x?.details != null || x?.overUnder != null) || list[0];
+  if (!o) return "";
+  const prov = String(o?.provider?.name || "");
+  const spread = String(o?.details || "");
+  const ou = o?.overUnder != null ? String(o.overUnder) : "";
+  const awayMl = o?.awayTeamOdds?.moneyLine, homeMl = o?.homeTeamOdds?.moneyLine;
+  const ml = (v) => v == null ? "\u2014" : Number(v) > 0 ? `+${v}` : String(v);
+  return `<div class="pg-odds rise-in" style="--i:1"><div class="pg-sec-hdr">BETTING LINE${prov ? ` <span class="pg-prov">${escapeHtml(prov)}</span>` : ""}</div><div class="pg-odds-grid"><div class="pg-odd pg-odd-fill"><span class="pg-odd-k">SPREAD</span><span class="pg-odd-v">${escapeHtml(spread || "\u2014")}</span></div><div class="pg-odd pg-odd-fill"><span class="pg-odd-k">OVER / UNDER</span><span class="pg-odd-v">${escapeHtml(ou || "\u2014")}</span></div><div class="pg-odd"><span class="pg-odd-k">${escapeHtml(g.away.abbr)} ML</span><span class="pg-odd-v">${escapeHtml(ml(awayMl))}</span></div><div class="pg-odd"><span class="pg-odd-k">${escapeHtml(g.home.abbr)} ML</span><span class="pg-odd-v">${escapeHtml(ml(homeMl))}</span></div></div></div>`;
 }
-function networksOf(g) {
-  return (g.broadcasts || []).map((b) => {
-    if (b?.media?.shortName) return String(b.media.shortName);
-    if (Array.isArray(b?.names) && b.names.length) return b.names.join(", ");
-    return "";
-  }).filter(Boolean).join(" \xB7 ");
+function injuryListHtml(entries, color) {
+  if (!entries.length) return `<div class="pg-inj-none">No reported injuries</div>`;
+  return entries.map((it, i) => {
+    const a = it?.athlete || {};
+    const head = a?.headshot?.href ? `<img class="pg-inj-head" data-psrc="${escapeHtml(proxied(String(a.headshot.href)))}" alt="">` : `<span class="pg-inj-head ph"></span>`;
+    const pos = String(a?.position?.abbreviation || "");
+    const num = a?.jersey != null ? `#${escapeHtml(String(a.jersey))}` : "";
+    const status = String(it?.status || it?.type?.description || "");
+    return `<div class="pg-inj-row" style="--i:${i}">` + head + `<div class="pg-inj-who"><div class="pg-inj-name">${escapeHtml(String(a?.displayName || "\u2014"))}</div><div class="pg-inj-meta">${escapeHtml(pos)}${pos && num ? " \xB7 " : ""}${num}</div></div><span class="pg-inj-status" style="--sc:${color}">${escapeHtml(status.toUpperCase())}</span></div>`;
+  }).join("");
+}
+function injuriesFor(teamId) {
+  const groups = lastSummary?.injuries || [];
+  const grp = groups.find((x) => String(x?.team?.id) === String(teamId));
+  return grp?.injuries || [];
+}
+function injuryPanelHtml(g, home) {
+  const t = home ? g.home : g.away;
+  const color = railColorOf(t, home ? "#013369" : "#d50a0a");
+  const list = injuriesFor(t.id);
+  const key = home ? "home" : "away";
+  const open = openInjuries.has(key);
+  return `<div class="pg-inj-card${open ? " is-open" : ""}" data-inj="${key}" style="--tc:${color}"><button class="pg-inj-btn" type="button" data-inj-btn="${key}">` + logoImg(t, "pg-inj-logo") + `<span class="pg-inj-label">${escapeHtml(t.abbr)} INJURIES</span><span class="pg-inj-count">${list.length}</span><svg class="pg-inj-chev" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 9l6 6 6-6"/></svg></button><div class="pg-inj-body"><div class="pg-inj-list">${injuryListHtml(list, color)}</div></div></div>`;
+}
+function bindInjuryToggles(root, g) {
+  root.querySelectorAll("[data-inj-btn]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const key = btn.getAttribute("data-inj-btn") || "";
+      const card = btn.closest(".pg-inj-card");
+      if (!card) return;
+      const nowOpen = !card.classList.contains("is-open");
+      card.classList.toggle("is-open", nowOpen);
+      if (nowOpen) openInjuries.add(key);
+      else openInjuries.delete(key);
+    });
+  });
+  void g;
 }
 function renderPregame(g) {
   const body = $("pregame-body");
   if (!body) return;
-  let when = "";
-  try {
-    when = new Date(g.date).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" }).toUpperCase() + "  \xB7  " + formatGameTime(g.date);
-  } catch {
+  const venue = g.venue?.fullName ? String(g.venue.fullName) : "";
+  const loc = g.venue?.address ? [g.venue.address.city, g.venue.address.state].filter(Boolean).join(", ") : "";
+  const awayColor = railColorOf(g.away, "#d50a0a");
+  const homeColor = railColorOf(g.home, "#013369");
+  const PIN_ICON = '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s7-5.5 7-11a7 7 0 1 0-14 0c0 5.5 7 11 7 11z"/><circle cx="12" cy="10" r="2.6"/></svg>';
+  const STADIUM_ICON = '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8c0-1.7 4-3 9-3s9 1.3 9 3-4 3-9 3-9-1.3-9-3z"/><path d="M3 8v6c0 1.7 4 3 9 3s9-1.3 9-3V8"/></svg>';
+  let html = "";
+  if (loc || venue) {
+    html += `<div class="pg-place rise-in" style="--i:0">`;
+    if (loc) {
+      html += `<div class="pg-place-row"><div class="pg-place-k">${PIN_ICON}<span>LOCATION</span></div><div class="pg-place-v">${escapeHtml(loc.toUpperCase())}</div></div>`;
+    }
+    if (venue) {
+      html += `<div class="pg-place-row"><div class="pg-place-k">${STADIUM_ICON}<span>STADIUM</span></div><div class="pg-place-v">${escapeHtml(venue.toUpperCase())}</div></div>`;
+    }
+    html += `</div>`;
   }
-  const nets = networksOf(g);
-  let html = kvRow("KICKOFF", escapeHtml(when));
-  if (nets) html += kvRow("TV", escapeHtml(nets));
-  if (g.venue?.fullName) {
-    const loc = g.venue.address ? [g.venue.address.city, g.venue.address.state].filter(Boolean).join(", ") : "";
-    html += kvRow("VENUE", escapeHtml(String(g.venue.fullName)) + (loc ? " \u2014 " + escapeHtml(loc) : ""));
-  }
-  html += kvRow(escapeHtml(g.away.abbr), escapeHtml(g.away.record || "\u2014"));
-  html += kvRow(escapeHtml(g.home.abbr), escapeHtml(g.home.record || "\u2014"));
+  void awayColor;
+  void homeColor;
+  html += oddsBlockHtml(g);
+  html += `<div class="pg-inj-wrap rise-in" style="--i:2">` + injuryPanelHtml(g, false) + injuryPanelHtml(g, true) + `</div>`;
   body.innerHTML = html;
+  bindInjuryToggles(body, g);
+  hydrateProxiedImages(body);
 }
 var YDS_RE = /(\d+(?:\.\d+)?)\s*YDS/i;
 function leaderYards(top) {
