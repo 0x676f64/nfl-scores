@@ -3026,7 +3026,7 @@ body.is-final .linescore-compact td.ls-inning, body.is-final .linescore-compact 
 }
 .pg-place-k svg { flex: 0 0 auto; }
 .pg-place-v {
-  font-family: "Rubik", var(--font-sans); font-style: italic; font-weight: 800;
+  font-family: "Rubik", var(--font-sans); font-style: italic; font-weight: 900;
   font-size: clamp(21px, 6.4vw, 28px); line-height: 1.12; color: var(--text-primary);
   letter-spacing: -.015em; margin-top: 3px;
 }
