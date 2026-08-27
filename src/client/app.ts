@@ -65,7 +65,10 @@ const isPostponedName = (n: string): boolean =>
 // ── State ─────────────────────────────────────────────────────────────────
 
 let eventId: string | null = null;
-let pollInterval: ReturnType<typeof setInterval> | null = null;
+let pollInterval: ReturnType<typeof setTimeout> | null = null;
+let lastRenderSig = "";
+let firstRender = true;
+let finalPollsDone = 0;
 let lastSummary: any = null;
 let lastGame: NormGame | null = null;
 let postgameNotificationFired = false;
@@ -191,6 +194,15 @@ function inlinePagerRegion(): HTMLElement | null {
   return document.querySelector(".tab-content.tab-content-active") as HTMLElement | null;
 }
 
+// Collapsible sections (injury cards, drive cards) grow via CSS transitions,
+// so a single rAF measurement right after the class flip reads the OLD
+// height and wrongly concludes "no overflow" — that was the pager vanishing
+// when a panel opened. Re-measure across the animation window instead.
+function syncPagerAfterAnimation(): void {
+  scheduleInlinePagerSync();
+  [80, 180, 280, 420].forEach((ms) => window.setTimeout(scheduleInlinePagerSync, ms));
+}
+
 function updateInlinePager(): void {
   const pager = document.getElementById("inline-pager");
   if (!pager) return;
@@ -247,6 +259,11 @@ function setupInlinePager(): void {
   const obs = new MutationObserver(scheduleInlinePagerSync);
   obs.observe(host, { childList: true, subtree: true, attributes: true, attributeFilter: ["class", "style"] });
   window.addEventListener("resize", scheduleInlinePagerSync);
+  // Any expand/collapse finishing changes the scrollable height.
+  host.addEventListener("transitionend", (e: Event) => {
+    const p = (e as TransitionEvent).propertyName;
+    if (p === "grid-template-rows" || p === "max-height" || p === "height") scheduleInlinePagerSync();
+  });
 
   updateInlinePager();
 }
@@ -1547,6 +1564,7 @@ function bindInjuryToggles(root: ParentNode, g: NormGame): void {
       const nowOpen = !card.classList.contains("is-open");
       card.classList.toggle("is-open", nowOpen);
       if (nowOpen) openInjuries.add(key); else openInjuries.delete(key);
+      syncPagerAfterAnimation();
     });
   });
   void g;
@@ -2083,6 +2101,7 @@ function renderPlaysTab(): void {
         if (!key) return;
         if (openDrives.has(key)) openDrives.delete(key); else openDrives.add(key);
         card.classList.toggle("open");
+        syncPagerAfterAnimation();
       });
     });
   }
@@ -2554,8 +2573,39 @@ function setupStandings(): void {
 
 // ── Header + master render ────────────────────────────────────────────────
 
+// Everything that can actually change between polls. If this string is
+// identical we skip the render entirely — that redundant innerHTML rebuild
+// (and the image re-hydration behind it) was the "blink" (same fix as MLB).
+function payloadSignature(s: any): string {
+  const c = s?.header?.competitions?.[0] || {};
+  const st = c?.status || {};
+  const comps: any[] = c?.competitors || [];
+  const drives = s?.drives;
+  const cur = drives?.current;
+  const curPlays: any[] = cur?.plays || [];
+  const lastPlay = curPlays[curPlays.length - 1];
+  return [
+    st?.type?.name, st?.period, st?.displayClock,
+    comps.map((x: any) => `${x?.id}:${x?.score}`).join(","),
+    (drives?.previous || []).length, curPlays.length,
+    lastPlay?.id, cur?.yards, cur?.team?.id,
+    (s?.scoringPlays || []).length,
+    (s?.videos || []).length,
+    (s?.winprobability || []).length,
+    (s?.injuries || []).reduce((n: number, gp: any) => n + (gp?.injuries || []).length, 0),
+    (s?.pickcenter || [])[0]?.details,
+  ].join("|");
+}
+
 function render(summary: any): void {
+  // Nothing moved since the last paint → leave the DOM alone. (Tab switches
+  // and other user actions call their renderers directly, so they still work.)
+  const sig = payloadSignature(summary);
+  const unchanged = sig === lastRenderSig && !firstRender;
   lastSummary = summary;
+  if (unchanged) return;
+  lastRenderSig = sig;
+  firstRender = false;
   const g = normalize(summary);
   if (!g) { reportError("normalize", "unreadable summary"); return; }
   lastGame = g;
@@ -2741,17 +2791,46 @@ function setupTabs(): void {
   });
 }
 
+// How often to ask, by phase. A finished game's data is frozen, and a
+// pregame payload changes a couple of times an hour — polling either at the
+// live 10s cadence was pure waste (Joe).
+function pollDelayMs(): number {
+  const g = lastGame;
+  if (!g) return 10000;
+  if (g.phase === "in") return 10000;               // live: unchanged
+  if (g.phase === "post") return 60000;             // final: a couple of confirmations, then stop
+  // pregame: tighten as kickoff approaches
+  const mins = (new Date(g.date).getTime() - Date.now()) / 60000;
+  if (!isFinite(mins)) return 60000;
+  if (mins <= 5) return 15000;
+  if (mins <= 30) return 60000;
+  return 180000;
+}
+
+function scheduleNextPoll(): void {
+  if (pollInterval) clearTimeout(pollInterval);
+  pollInterval = setTimeout(() => {
+    void (async (): Promise<void> => {
+      // Final games: confirm a couple of times (late stat corrections), then
+      // stop polling altogether — nothing more is coming.
+      if (lastGame?.phase === "post") {
+        finalPollsDone++;
+        if (finalPollsDone > 3) { stopPolling(); return; }
+      }
+      if (!document.hidden && eventId != null) await fetchAndRender(eventId);
+      scheduleNextPoll();
+    })();
+  }, pollDelayMs());
+}
+
 function startPolling(): void {
-  if (pollInterval) clearInterval(pollInterval);
-  pollInterval = setInterval(() => {
-    if (document.hidden || eventId == null) return;
-    void fetchAndRender(eventId);
-  }, 10000);
+  finalPollsDone = 0;
+  scheduleNextPoll();
 }
 
 function stopPolling(): void {
   if (pollInterval) {
-    clearInterval(pollInterval);
+    clearTimeout(pollInterval);
     pollInterval = null;
   }
 }

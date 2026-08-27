@@ -404,6 +404,9 @@ var RealtimeSubscriptionStatus;
 var isPostponedName = (n) => n === "STATUS_POSTPONED" || n === "STATUS_CANCELED";
 var eventId = null;
 var pollInterval = null;
+var lastRenderSig = "";
+var firstRender = true;
+var finalPollsDone = 0;
 var lastSummary = null;
 var lastGame = null;
 var postgameNotificationFired = false;
@@ -498,6 +501,10 @@ function scheduleInlinePagerSync() {
 function inlinePagerRegion() {
   return document.querySelector(".tab-content.tab-content-active");
 }
+function syncPagerAfterAnimation() {
+  scheduleInlinePagerSync();
+  [80, 180, 280, 420].forEach((ms) => window.setTimeout(scheduleInlinePagerSync, ms));
+}
 function updateInlinePager() {
   const pager = document.getElementById("inline-pager");
   if (!pager) return;
@@ -543,6 +550,10 @@ function setupInlinePager() {
   const obs = new MutationObserver(scheduleInlinePagerSync);
   obs.observe(host, { childList: true, subtree: true, attributes: true, attributeFilter: ["class", "style"] });
   window.addEventListener("resize", scheduleInlinePagerSync);
+  host.addEventListener("transitionend", (e) => {
+    const p = e.propertyName;
+    if (p === "grid-template-rows" || p === "max-height" || p === "height") scheduleInlinePagerSync();
+  });
   updateInlinePager();
 }
 function setupExpand() {
@@ -1644,6 +1655,7 @@ function bindInjuryToggles(root, g) {
       card.classList.toggle("is-open", nowOpen);
       if (nowOpen) openInjuries.add(key);
       else openInjuries.delete(key);
+      syncPagerAfterAnimation();
     });
   });
   void g;
@@ -2075,6 +2087,7 @@ function renderPlaysTab() {
         if (openDrives.has(key)) openDrives.delete(key);
         else openDrives.add(key);
         card.classList.toggle("open");
+        syncPagerAfterAnimation();
       });
     });
   }
@@ -2508,8 +2521,38 @@ function setupStandings() {
     });
   });
 }
+function payloadSignature(s) {
+  const c = s?.header?.competitions?.[0] || {};
+  const st = c?.status || {};
+  const comps = c?.competitors || [];
+  const drives = s?.drives;
+  const cur = drives?.current;
+  const curPlays = cur?.plays || [];
+  const lastPlay = curPlays[curPlays.length - 1];
+  return [
+    st?.type?.name,
+    st?.period,
+    st?.displayClock,
+    comps.map((x) => `${x?.id}:${x?.score}`).join(","),
+    (drives?.previous || []).length,
+    curPlays.length,
+    lastPlay?.id,
+    cur?.yards,
+    cur?.team?.id,
+    (s?.scoringPlays || []).length,
+    (s?.videos || []).length,
+    (s?.winprobability || []).length,
+    (s?.injuries || []).reduce((n, gp) => n + (gp?.injuries || []).length, 0),
+    (s?.pickcenter || [])[0]?.details
+  ].join("|");
+}
 function render(summary) {
+  const sig = payloadSignature(summary);
+  const unchanged = sig === lastRenderSig && !firstRender;
   lastSummary = summary;
+  if (unchanged) return;
+  lastRenderSig = sig;
+  firstRender = false;
   const g = normalize(summary);
   if (!g) {
     reportError("normalize", "unreadable summary");
@@ -2715,16 +2758,40 @@ function setupTabs() {
     });
   });
 }
+function pollDelayMs() {
+  const g = lastGame;
+  if (!g) return 1e4;
+  if (g.phase === "in") return 1e4;
+  if (g.phase === "post") return 6e4;
+  const mins = (new Date(g.date).getTime() - Date.now()) / 6e4;
+  if (!isFinite(mins)) return 6e4;
+  if (mins <= 5) return 15e3;
+  if (mins <= 30) return 6e4;
+  return 18e4;
+}
+function scheduleNextPoll() {
+  if (pollInterval) clearTimeout(pollInterval);
+  pollInterval = setTimeout(() => {
+    void (async () => {
+      if (lastGame?.phase === "post") {
+        finalPollsDone++;
+        if (finalPollsDone > 3) {
+          stopPolling();
+          return;
+        }
+      }
+      if (!document.hidden && eventId != null) await fetchAndRender(eventId);
+      scheduleNextPoll();
+    })();
+  }, pollDelayMs());
+}
 function startPolling() {
-  if (pollInterval) clearInterval(pollInterval);
-  pollInterval = setInterval(() => {
-    if (document.hidden || eventId == null) return;
-    void fetchAndRender(eventId);
-  }, 1e4);
+  finalPollsDone = 0;
+  scheduleNextPoll();
 }
 function stopPolling() {
   if (pollInterval) {
-    clearInterval(pollInterval);
+    clearTimeout(pollInterval);
     pollInterval = null;
   }
 }

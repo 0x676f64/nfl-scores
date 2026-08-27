@@ -3009,7 +3009,16 @@ body.is-final .linescore-compact td.ls-inning, body.is-final .linescore-compact 
 /* (pregame hero removed — the header score-row logos are the only set) */
 
 /* LOCATION / STADIUM: labeled rows, big Rubik italic values (Joe's ref) */
-.pg-place { max-width: 460px; margin: 10px auto 0; padding: 0 10px; display: grid; gap: 13px; }
+/* Location + Stadium side by side, wrapping to a column when the card is
+   too narrow to hold both cleanly (Joe). auto-fit + minmax does the flip
+   with no breakpoint guessing — it's driven by actual available width. */
+.pg-place {
+  max-width: 460px; margin: 10px auto 0; padding: 0 10px;
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px 16px;
+}
+.pg-place-row { min-width: 0; }
+.pg-place-v { overflow-wrap: anywhere; }
 .pg-place-k {
   display: flex; align-items: center; gap: 5px;
   font-family: var(--font-mono); font-size: 10.5px; font-weight: 700;
@@ -3127,3 +3136,29 @@ body.is-final .linescore-compact td.ls-inning, body.is-final .linescore-compact 
    makes every Rubik face resolve italic app-wide. */
 .tab, .tab span, .status-badge, .game-context, .team-record,
 .pg-odd-k, .pg-odd-v, .pg-place-k { font-style: normal; }
+
+/* ── INLINE pregame: fit the whole matchup without scrolling ──────────
+   Reddit's inline card is short; the big treatment was tuned in a browser
+   (Joe). Expanded mode keeps the full sizes — this only shrinks inline. */
+body.is-inline.is-pregame .team-logo { width: min(58px, 16vw); height: min(58px, 16vw); }
+body.is-inline.is-pregame .score-row { padding-top: 2px; padding-bottom: 0; }
+body.is-inline.is-pregame .team-record { font-size: 11px; }
+body.is-inline.is-pregame .status-score { font-size: 21px; }
+
+body.is-inline .pg-place { gap: 5px 12px; margin-top: 4px; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+body.is-inline .pg-place-k { font-size: 9px; gap: 4px; }
+body.is-inline .pg-place-k svg { width: 11px; height: 11px; }
+body.is-inline .pg-place-v { font-size: clamp(15px, 4.6vw, 18px); margin-top: 1px; }
+
+body.is-inline .pg-sec-hdr { font-size: 9.5px; margin: 8px 0 4px; }
+body.is-inline .pg-odds-grid { gap: 5px; }
+body.is-inline .pg-odd { padding: 5px 4px 4px; gap: 1px; }
+body.is-inline .pg-odd-k { font-size: 8px; }
+body.is-inline .pg-odd-v { font-size: 15px; }
+body.is-inline .pg-odd-fill .pg-odd-v { font-size: 18px; }
+
+body.is-inline .pg-inj-wrap { gap: 5px; margin: 8px auto 2px; }
+body.is-inline .pg-inj-btn { padding: 6px 9px; gap: 7px; }
+body.is-inline .pg-inj-logo { width: 26px; height: 26px; }
+body.is-inline .pg-inj-label { font-size: 11.5px; }
+body.is-inline .pg-inj-count { font-size: 10px; padding: 0 6px; }
