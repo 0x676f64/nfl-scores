@@ -870,12 +870,11 @@ function ezNameText(g: NormGame, left: boolean): string {
   // shrink only when the name would overflow the usable midline (~54 units);
   // a spacing-only textLength clamp guards the estimate without ever
   // squishing glyphs (that was the old distortion).
-  const USABLE = Math.hypot(27, FB.B - FB.T) * 0.82;
-  const ADV = 0.47;
-  const size = Math.max(9, Math.min(14, USABLE / (nick.length * ADV)));
-  const est = nick.length * size * ADV;
-  const clampAttr = est > USABLE - 1
-    ? ` textLength="${USABLE}" lengthAdjust="spacing"` : "";
+  // Start at the max size; fitEzNames() measures the REAL rendered width
+  // after paint and scales down only if needed (an estimate of Oswald's
+  // advance width was always going to be approximate — measurement isn't).
+  const size = 14;
+  const clampAttr = "";
   return `<text class="fv-ezname" font-size="${size.toFixed(1)}" dy="0.34em">` +
     `<textPath href="#fv-ezpath-${left ? "l" : "r"}" startOffset="50%" text-anchor="middle"${clampAttr}>` +
     `${escapeHtml(nick)}</textPath></text>`;
@@ -1011,9 +1010,16 @@ function playGeom(p: any, offenseIsHome: boolean, homeId: string, awayId: string
   const s = numOrNull(p?.start?.yardsToEndzone);
   const e = numOrNull(p?.end?.yardsToEndzone);
   if (s == null || e == null) return null;
+  // FRAME RULE (hardened after the live PIT@BUF mirror bug): end.team's
+  // frame is definitional ONLY on change-of-possession plays (punt/kick/
+  // INT/fumble — the ball ends in the receiver's frame). On ordinary
+  // scrimmage plays the LIVE feed can put the DEFENSE in end.team, and
+  // trusting it mirrored the LOS (team "marching the wrong way" while the
+  // possession-driven arrow stayed correct). Postgame fixtures never showed
+  // this because amended data carries the offense there.
   const endTeamId = p?.end?.team?.id != null ? String(p.end.team.id) : "";
   let endFrameIsHome = offenseIsHome;
-  if (endTeamId && (endTeamId === homeId || endTeamId === awayId)) {
+  if (CHANGE_POSS.test(playTypeText(p)) && endTeamId && (endTeamId === homeId || endTeamId === awayId)) {
     endFrameIsHome = endTeamId === homeId;
   }
   const startFrameIsHome = KICKOFF_PLAY.test(playTypeText(p)) ? !offenseIsHome : offenseIsHome;
@@ -1045,6 +1051,50 @@ const CHANGE_POSS = /punt|kickoff|interception|fumble/i;
 // as drives.current for a beat after a punt/kick/INT, so the drive team alone
 // shows the OLD possessor at the new spot — the end.team of a
 // change-of-possession play is the truth.
+// Timeouts aren't a field in the summary payload — but every charged timeout
+// play carries its number and team ("Timeout #1 by CIN at 01:04."). Numbering
+// resets each half, and ESPN sometimes skips a number, so take the HIGHEST
+// number seen this half as the used count. 3 per half, 2 in overtime.
+const TIMEOUT_RE = /Timeout\s*#(\d+)\s*by\s*([A-Z]{2,4})/i;
+
+function timeoutsRemaining(summary: any, g: NormGame): { away: number; home: number } | null {
+  const period = Number(summary?.header?.competitions?.[0]?.status?.period) ||
+    Number(lastPlayOf(summary)?.period?.number) || 0;
+  if (!period) return null;
+  const perHalf = period >= 5 ? 2 : 3;
+  const halfOf = (p: number): number => (p >= 5 ? 3 : p <= 2 ? 1 : 2);
+  const nowHalf = halfOf(period);
+
+  const drives = summary?.drives;
+  const all: any[] = [...(drives?.previous || [])];
+  if (drives?.current) all.push(drives.current);
+
+  const used: Record<string, number> = {};
+  for (const d of all) {
+    for (const p of d?.plays || []) {
+      const per = Number(p?.period?.number) || 0;
+      if (!per || halfOf(per) !== nowHalf) continue;
+      const m = TIMEOUT_RE.exec(String(p?.text || ""));
+      if (!m) continue;
+      const abbr = String(m[2] || "").toUpperCase();
+      const n = Number(m[1] || 0) || 0;
+      if (!abbr) continue;
+      if (n > (used[abbr] || 0)) used[abbr] = n;
+    }
+  }
+  const left = (t: NormTeam): number =>
+    Math.max(0, Math.min(perHalf, perHalf - (used[(t.abbr || "").toUpperCase()] || 0)));
+  return { away: left(g.away), home: left(g.home) };
+}
+
+function timeoutDotsHtml(left: number, total: number): string {
+  let s = "";
+  for (let i = 0; i < total; i++) {
+    s += `<span class="to-dot${i < left ? "" : " to-used"}"></span>`;
+  }
+  return s;
+}
+
 function spotOwnerOf(summary: any, g: NormGame, off: { team: NormTeam; isHome: boolean }): { team: NormTeam; isHome: boolean } {
   const { lastReal } = lastPlays(summary);
   if (lastReal && CHANGE_POSS.test(playTypeText(lastReal))) {
@@ -1089,6 +1139,17 @@ function arcPath(u1: number, u2: number, kick: boolean): string {
   const c1 = a + (b - a) * 0.2, c2 = a + (b - a) * 0.8;
   return `M ${a.toFixed(1)} ${y} C ${c1.toFixed(1)} ${cy}, ${c2.toFixed(1)} ${cy}, ${b.toFixed(1)} ${y}`;
 }
+// Field goals / PATs fly THROUGH the uprights (Joe): the path ends inside
+// the prong gap (posts sit at screen x≈12 left / x≈588 right, prongs span
+// screen y≈-1..25), still airborne — the ball's end-fade sells the finish.
+function fgPath(u1: number, left: boolean): string {
+  const a = xLane(u1), y = FB.LANE;
+  const bx = left ? 12 : 588;
+  const by = 8; // mid-prong height
+  const c1 = a + (bx - a) * 0.25, c2 = a + (bx - a) * 0.78;
+  return `M ${a.toFixed(1)} ${y} C ${c1.toFixed(1)} -8, ${c2.toFixed(1)} -5, ${bx} ${by}`;
+}
+
 function loopPath(u: number, dir: number): string {
   // small forward curl down to the return lane (ESPN's turnover loop)
   const x = xLane(u);
@@ -1100,7 +1161,7 @@ function segLen(u1: number, u2: number, arc: boolean): number {
   return arc ? d * 1.25 + 20 : d;
 }
 
-const CATCH_RE = /(?:kicks|punts)[^.]*? to ([A-Z]{2,4}) (\d{1,2})/;
+const CATCH_RE = /(?:kicks|punts)[^.]*? to (?:the )?([A-Z]{2,4}) (\d{1,2})/i;
 const INT_RE = /INTERCEPTED.{0,50}? at ([A-Z]{2,4}) (\d{1,2})/i;
 const FAIR_OR_TB = /fair catch|touchback/i;
 
@@ -1140,16 +1201,40 @@ function decomposePlay(p: any, off: { team: NormTeam; isHome: boolean }, g: Norm
   } else if (kickish) {
     const m = text.match(CATCH_RE);
     const caught = m ? spotToUnit(m[1]!, Number(m[2]), g) : null;
-    const at = caught != null ? clampUnit(caught) : gm.x2;
+    // Touchbacks: the ball ACTUALLY lands in the end zone; the next spot
+    // (20/25/30/35) is a placement RULE, not a return — so the arc flies
+    // into the zone and the pin simply appears at the placement (Joe).
+    const intoEz = /touchback|to (?:the )?end zone/i.test(text);
+    // ROLE TRAP: `off` is the KICKER on punts but the RECEIVER on kickoffs
+    // (kickoffs live in the receiving team's drive). Deriving the kick's
+    // travel direction from the play type sidesteps the ambiguity:
+    const isKickoffPlay = KICKOFF_PLAY.test(tType);
+    const kickDir = isKickoffPlay ? (off.isHome ? 1 : -1) : (off.isHome ? -1 : 1);
+    const ezLanding = kickDir > 0 ? 115 : 5; // the EZ the kick flies into
+    // Live texts sometimes omit or rephrase the catch spot, which collapsed
+    // a returned kick into "ball dropped at the tackle" with no return drawn
+    // (Joe's report). statYardage on kick/punt plays is the RETURN yardage,
+    // so when the parse fails, walk back from the end spot along the kick
+    // direction to reconstruct where the returner caught it.
+    let derived: number | null = null;
+    if (caught == null && !intoEz && Math.abs(gm.yards) > 0.5) {
+      derived = clampUnit(gm.x2 + kickDir * Math.abs(gm.yards));
+    }
+    const at = intoEz && caught == null ? ezLanding
+      : caught != null ? clampUnit(caught)
+      : derived != null ? derived : gm.x2;
     segs.push({ d: arcPath(gm.x1, at, true), len: segLen(gm.x1, at, true), kind: "arc", color: ink });
+    // intoEz moves only the LANDING; whether a return draws is governed by
+    // the text (touchback/fair catch suppress it). A kick fielded IN the
+    // zone and run out gets its return drawn from the zone — correct.
     if (!FAIR_OR_TB.test(text) && Math.abs(gm.x2 - at) > 0.5) {
       segs.push({ d: laneLine(at, gm.x2, true), len: segLen(at, gm.x2, false), kind: "return", color: ink });
       badge = `${Math.round(Math.abs(gm.x2 - at))}-Yd Return`;
     }
   } else if (FG_PLAY.test(tType)) {
-    // Kick sails at the posts behind the attacked end zone.
-    const target = off.isHome ? 3 : 117;
-    segs.push({ d: arcPath(gm.x1, target, true), len: segLen(gm.x1, target, true), kind: "arc", color: ink });
+    // Kick sails THROUGH the uprights behind the attacked end zone.
+    const left = off.isHome;
+    segs.push({ d: fgPath(gm.x1, left), len: segLen(gm.x1, left ? 0 : 120, true) + 14, kind: "arc", color: ink });
     endUnit = gm.x1;
   } else if (gm.air) {
     segs.push({ d: arcPath(gm.x1, gm.x2, false), len: segLen(gm.x1, gm.x2, true), kind: "arc", color: ink });
@@ -1191,6 +1276,24 @@ function pinMarkup(team: NormTeam, u: number): string {
     `</g>`;
 }
 
+// True-fit the end-zone names: measure what actually rendered and shrink to
+// the usable midline. Runs after the statics are in the DOM (fonts may land
+// later, so it re-runs on document.fonts.ready too).
+function fitEzNames(): void {
+  const USABLE = Math.hypot(27, FB.B - FB.T) * 0.82;
+  document.querySelectorAll<SVGTextElement>("text.fv-ezname").forEach((t) => {
+    try {
+      t.setAttribute("font-size", "14");
+      const w = t.getComputedTextLength();
+      if (!w) return;
+      if (w > USABLE) {
+        const next = Math.max(8, 14 * (USABLE / w));
+        t.setAttribute("font-size", next.toFixed(1));
+      }
+    } catch { /* getComputedTextLength can throw pre-layout */ }
+  });
+}
+
 let lastAnimatedPlayId = "";
 
 function renderFieldViz(summary: any, g: NormGame, sit: Situation | null): void {
@@ -1217,13 +1320,31 @@ function renderFieldViz(summary: any, g: NormGame, sit: Situation | null): void 
   const playKey = String(lastReal?.id ?? last?.id ?? "");
   const isNewPlay = !!playKey && playKey !== lastAnimatedPlayId;
 
-  const viz = lastReal ? decomposePlay(lastReal, off, g) : null;
+  // Frame the play by ITS OWN offense, not the current drive's. ESPN flips
+  // drives.current to the NEXT possession immediately (e.g. right after a
+  // FG, current = the receiving team's new drive), so `off` can belong to
+  // the wrong team while lastReal is still the previous drive's play — that
+  // mirrored the whole FG render (wrong start half, wrong posts) in the
+  // live LAR@LAC game. start.team is the play's offense on every normal
+  // play (verified 155/155 in fixtures) and the KICKER on kickoffs, which
+  // playGeom's kickoff flip already expects.
+  const playOff = ((): { team: NormTeam; isHome: boolean } => {
+    const st = lastReal?.start?.team?.id != null ? String(lastReal.start.team.id) : "";
+    if (!st || (st !== g.home.id && st !== g.away.id)) return off;
+    const kick = KICKOFF_PLAY.test(playTypeText(lastReal));
+    const offenseId = kick ? (st === g.home.id ? g.away.id : g.home.id) : st;
+    return offenseId === g.home.id
+      ? { team: g.home, isHome: true }
+      : { team: g.away, isHome: false };
+  })();
+
+  const viz = lastReal ? decomposePlay(lastReal, playOff, g) : null;
 
   // spot
   let spot: number | null = viz ? viz.endUnit : null;
   if (spot == null && last) {
     const e = numOrNull(last?.end?.yardsToEndzone);
-    if (e != null) spot = clampUnit(ytgToUnit(e, off.isHome));
+    if (e != null) spot = clampUnit(ytgToUnit(e, playOff.isHome));
   }
   if (spot == null && sit && sit.yardsToEndzone != null) {
     spot = clampUnit(ytgToUnit(sit.yardsToEndzone, off.isHome));
@@ -2674,6 +2795,18 @@ function render(summary: any): void {
   const ar = $("away-record"), hr = $("home-record");
   if (ar) ar.textContent = g.away.record;
   if (hr) hr.textContent = g.home.record;
+  // Timeouts: live only — they're meaningless pregame and spent at final.
+  const atoEl = $("away-timeouts"), htoEl = $("home-timeouts");
+  const tos = phase === "in" ? timeoutsRemaining(summary, g) : null;
+  if (atoEl && htoEl) {
+    if (tos) {
+      const total = (Number(summary?.header?.competitions?.[0]?.status?.period) || 1) >= 5 ? 2 : 3;
+      atoEl.innerHTML = timeoutDotsHtml(tos.away, total);
+      htoEl.innerHTML = timeoutDotsHtml(tos.home, total);
+    } else {
+      atoEl.innerHTML = ""; htoEl.innerHTML = "";
+    }
+  }
   // Team-color wash behind the hero logos (ESPN's edge-bleed look). The
   // color is set per team; CSS fades it out toward the center.
   const awayWrap = $("away-logo-holder"), homeWrap = $("home-logo-holder");
@@ -2743,7 +2876,12 @@ function render(summary: any): void {
     if (dyn) dyn.textContent = "LIVE";
     const pane = $("live-content");
     if (pane) pane.style.display = "block";
-    if (!fieldBuilt) { buildFieldStatics(g); fieldBuilt = true; }
+    if (!fieldBuilt) {
+      buildFieldStatics(g);
+      fieldBuilt = true;
+      fitEzNames();
+      try { (document as any).fonts?.ready?.then(fitEzNames); } catch { /* no-op */ }
+    }
     const sitEl = $("situation");
     if (sitEl) {
       const show = !!(sit && sit.ddText);

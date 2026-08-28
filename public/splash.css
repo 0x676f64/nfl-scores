@@ -2472,7 +2472,7 @@ body.on-standings-tab .weather-strip { max-height: 0; opacity: 0; padding-top: 0
 
 /* field — flat SVG, ESPN coordinate system (perspective baked in).
    Full-bleed: the field escapes the pane's side padding for maximum width. */
-.fieldwrap { padding: 12px 0 0; margin: 0 calc(-1 * var(--space-md) + 4px); }
+.fieldwrap { margin: 0 calc(-1 * var(--space-md) + 4px); }
 .field-svg { width: 100%; height: auto; display: block; overflow: visible; }
 .fv-sideoverlay { fill: rgba(10, 24, 40, 0.26); }
 .fv-band { fill: #f7f8f9; }
@@ -3165,7 +3165,7 @@ body.is-inline .pg-inj-count { font-size: 10px; padding: 0 6px; }
 
 /* ── red-zone tint: the attacked 20 glows pale red (ESPN parity) ────── */
 .fv-rz {
-  fill: rgba(213, 10, 10, 0.12);
+  fill: rgba(213, 10, 10, 0.377);
   animation: fv-rz-in 0.45s var(--ease-out);
 }
 :root:not([data-theme="light"]) .fv-rz { fill: rgba(213, 10, 10, 0.18); }
@@ -3175,3 +3175,20 @@ body.is-inline .pg-inj-count { font-size: 10px; padding: 0 6px; }
 /* pin abbr is a fallback only — revealed when the logo image fails */
 .fv-pin-abbr { opacity: 0; }
 .fv-pin-g.no-logo .fv-pin-abbr { opacity: 1; }
+
+/* ── timeouts: three small dots under each record (Joe) ─────────────── */
+.timeouts {
+  display: flex; gap: 3px; justify-content: center; align-items: center;
+  margin-top: 3px; min-height: 6px; line-height: 0;
+}
+.timeouts:empty { display: none; margin-top: 0; min-height: 0; }
+.to-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--accent-dim);
+  border: 1px solid var(--accent-dim);
+  box-sizing: border-box;
+  transition: background .2s ease;
+}
+/* used = hollow, ring stays so the count is still readable */
+.to-dot.to-used { background: transparent; }
+[data-theme="light"] .to-dot { opacity: 0.8; }
