@@ -1025,8 +1025,8 @@ function numOrNull(v) {
   return isFinite(n) && v != null ? n : null;
 }
 function fmtDD(down, dist) {
-  if (down == null) return "";
-  const o = ["", "1st", "2nd", "3rd", "4th"][down] || down + "th";
+  if (down == null || down < 1 || down > 4) return "";
+  const o = ["", "1st", "2nd", "3rd", "4th"][down];
   return `${o} & ${dist == null ? "\u2014" : dist === 0 ? "Goal" : dist}`;
 }
 function parseSituation(summary, g) {
@@ -1040,6 +1040,7 @@ function parseSituation(summary, g) {
     distance = numOrNull(sit.distance);
     yardsToEndzone = numOrNull(sit.yardsToEndzone != null ? sit.yardsToEndzone : sit.yardLine);
     ddText = String(sit.shortDownDistanceText || sit.downDistanceText || "").replace(/\s+at\s+.*$/i, "");
+    if (/^-|^0(st|nd|rd|th)/.test(ddText)) ddText = "";
     possText = String(sit.possessionText || "");
     possTeamId = sit.possession != null ? String(sit.possession) : "";
   } else if (end) {
@@ -1047,6 +1048,7 @@ function parseSituation(summary, g) {
     distance = numOrNull(end.distance);
     yardsToEndzone = numOrNull(end.yardsToEndzone);
     ddText = String(end.shortDownDistanceText || end.downDistanceText || "").replace(/\s+at\s+.*$/i, "");
+    if (/^-|^0(st|nd|rd|th)/.test(ddText)) ddText = "";
     possText = String(end.possessionText || "");
     possTeamId = end.team?.id != null ? String(end.team.id) : "";
   }
@@ -1154,6 +1156,7 @@ function buildFieldStatics(g) {
   s += `<g transform="translate(0 ${FB.T - 26})">${POSTS_SVG}</g>`;
   s += ezNamePaths();
   s += ezNameText(g, true) + ezNameText(g, false);
+  s += `<g id="fv-rz"></g>`;
   s += `<line id="fv-first" class="fv-first" x1="0" y1="${FB.T}" x2="0" y2="${FB.B}" style="display:none"/>`;
   s += `<g id="fv-drive"></g><g id="fv-play"></g><g id="fv-pin" style="display:none"></g><g id="fv-chip" style="display:none"></g>`;
   svg.innerHTML = s;
@@ -1439,6 +1442,19 @@ function renderFieldViz(summary, g, sit) {
     }
   }
   const owner = spotOwnerOf(summary, g, off);
+  {
+    const rzG = $("fv-rz");
+    if (rzG) {
+      const attackingLeft = owner.isHome;
+      const inRz = spot != null && (attackingLeft ? spot <= 30 : spot >= 90);
+      if (inRz) {
+        const u1 = attackingLeft ? 10 : 90, u2 = attackingLeft ? 30 : 110;
+        rzG.innerHTML = `<polygon class="fv-rz" points="${xB(u2)} ${FB.B} ${xB(u1)} ${FB.B} ${xT(u1)} ${FB.T} ${xT(u2)} ${FB.T}"/>`;
+      } else if (rzG.innerHTML) {
+        rzG.innerHTML = "";
+      }
+    }
+  }
   if (spot != null) {
     const d = owner.isHome ? -1 : 1;
     const hx = xLane(clampUnit(spot + d * 1.2));

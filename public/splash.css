@@ -3026,7 +3026,7 @@ body.is-final .linescore-compact td.ls-inning, body.is-final .linescore-compact 
 }
 .pg-place-k svg { flex: 0 0 auto; }
 .pg-place-v {
-  font-family: "Rubik", var(--font-sans); font-style: italic; font-weight: 900;
+  font-family: "Rubik", var(--font-sans); font-style: italic; font-weight: 800;
   font-size: clamp(21px, 6.4vw, 28px); line-height: 1.12; color: var(--text-primary);
   letter-spacing: -.015em; margin-top: 3px;
 }
@@ -3162,3 +3162,16 @@ body.is-inline .pg-inj-btn { padding: 6px 9px; gap: 7px; }
 body.is-inline .pg-inj-logo { width: 26px; height: 26px; }
 body.is-inline .pg-inj-label { font-size: 11.5px; }
 body.is-inline .pg-inj-count { font-size: 10px; padding: 0 6px; }
+
+/* ── red-zone tint: the attacked 20 glows pale red (ESPN parity) ────── */
+.fv-rz {
+  fill: rgba(213, 10, 10, 0.12);
+  animation: fv-rz-in 0.45s var(--ease-out);
+}
+:root:not([data-theme="light"]) .fv-rz { fill: rgba(213, 10, 10, 0.18); }
+@keyframes fv-rz-in { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .fv-rz { animation: none; } }
+
+/* pin abbr is a fallback only — revealed when the logo image fails */
+.fv-pin-abbr { opacity: 0; }
+.fv-pin-g.no-logo .fv-pin-abbr { opacity: 1; }

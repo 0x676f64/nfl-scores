@@ -717,8 +717,11 @@ function numOrNull(v: any): number | null {
 }
 
 function fmtDD(down: number | null, dist: number | null): string {
-  if (down == null) return "";
-  const o = ["", "1st", "2nd", "3rd", "4th"][down] || down + "th";
+  // ESPN reports down:-1 (or 0) between plays — after a score, before the
+  // PAT/kickoff. That's "no situation", not a formattable down; returning ""
+  // hides the DOWN|BALL ON strip and lets the play banner carry the moment.
+  if (down == null || down < 1 || down > 4) return "";
+  const o = ["", "1st", "2nd", "3rd", "4th"][down];
   return `${o} & ${dist == null ? "—" : dist === 0 ? "Goal" : dist}`;
 }
 
@@ -735,12 +738,14 @@ function parseSituation(summary: any, g: NormGame): Situation | null {
     // Short form only — the long downDistanceText embeds the spot ("1st & 10
     // at TEN 13"), which duplicated the BALL ON column.
     ddText = String(sit.shortDownDistanceText || sit.downDistanceText || "").replace(/\s+at\s+.*$/i, "");
+    if (/^-|^0(st|nd|rd|th)/.test(ddText)) ddText = ""; // "-1th & 10" junk
     possText = String(sit.possessionText || "");
     possTeamId = sit.possession != null ? String(sit.possession) : "";
   } else if (end) {
     down = numOrNull(end.down); distance = numOrNull(end.distance);
     yardsToEndzone = numOrNull(end.yardsToEndzone);
     ddText = String(end.shortDownDistanceText || end.downDistanceText || "").replace(/\s+at\s+.*$/i, "");
+    if (/^-|^0(st|nd|rd|th)/.test(ddText)) ddText = ""; // "-1th & 10" junk
     possText = String(end.possessionText || "");
     possTeamId = end.team?.id != null ? String(end.team.id) : "";
   }
@@ -909,6 +914,7 @@ function buildFieldStatics(g: NormGame): void {
   s += ezNamePaths();
   s += ezNameText(g, true) + ezNameText(g, false);
   // dynamic layers (order = paint order)
+  s += `<g id="fv-rz"></g>`;
   s += `<line id="fv-first" class="fv-first" x1="0" y1="${FB.T}" x2="0" y2="${FB.B}" style="display:none"/>`;
   s += `<g id="fv-drive"></g><g id="fv-play"></g><g id="fv-pin" style="display:none"></g><g id="fv-chip" style="display:none"></g>`;
   svg.innerHTML = s;
@@ -1173,12 +1179,15 @@ function pinMarkup(team: NormTeam, u: number): string {
   const x = xLane(u).toFixed(1);
   const local = `/teams/${encodeURIComponent(team.id)}.png`;
   const T = FB.T;
-  return `<g transform="translate(${x} 0)">` +
+  // The abbr is a FALLBACK for a failed logo, not a backdrop — it stays
+  // hidden until the image actually errors (logos with transparency were
+  // letting it show through, per Joe).
+  return `<g class="fv-pin-g" transform="translate(${x} 0)">` +
     `<path class="fv-pin-tail" d="M -5 ${T + 7} L 0 ${T + 18} L 5 ${T + 7} Z"/>` +
     `<circle class="fv-pin-bubble" cy="${T - 5}" r="13"/>` +
     `<text class="fv-pin-abbr" y="${T - 1.5}" text-anchor="middle">${escapeHtml(team.abbr)}</text>` +
     `<image href="${local}" x="-10" y="${T - 15}" width="20" height="20" preserveAspectRatio="xMidYMid meet"` +
-    ` onerror="this.remove()"/>` +
+    ` onerror="this.remove();this.parentNode&&this.parentNode.classList.add('no-logo')"/>` +
     `</g>`;
 }
 
@@ -1275,6 +1284,23 @@ function renderFieldViz(summary: any, g: NormGame, sit: Situation | null): void 
 
   // direction arrow at the spot — the NEW possessor's attack direction
   const owner = spotOwnerOf(summary, g, off);
+
+  // RED ZONE tint (ESPN-style, Joe's ask): when the spot owner is inside the
+  // attacked 20, the last 20 yards glow a pale red. Home attacks LEFT
+  // (toward unit 10), away RIGHT (toward 110) — same convention as the arrow.
+  {
+    const rzG = $("fv-rz");
+    if (rzG) {
+      const attackingLeft = owner.isHome;
+      const inRz = spot != null && (attackingLeft ? spot <= 30 : spot >= 90);
+      if (inRz) {
+        const u1 = attackingLeft ? 10 : 90, u2 = attackingLeft ? 30 : 110;
+        rzG.innerHTML = `<polygon class="fv-rz" points="${xB(u2)} ${FB.B} ${xB(u1)} ${FB.B} ${xT(u1)} ${FB.T} ${xT(u2)} ${FB.T}"/>`;
+      } else if (rzG.innerHTML) {
+        rzG.innerHTML = "";
+      }
+    }
+  }
   if (spot != null) {
     const d = owner.isHome ? -1 : 1;
     const hx = xLane(clampUnit(spot + d * 1.2));
