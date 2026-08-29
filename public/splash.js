@@ -1233,7 +1233,24 @@ function spotToUnit(abbr, yard, g) {
   if (abbr === g.home.abbr) return 110 - yard;
   return null;
 }
-function playGeom(p, offenseIsHome, homeId, awayId) {
+var SPOT_RE = /\b(?:at|to|from)\s+(?:([A-Z]{2,4})\s+)?(\d{1,2})\b/g;
+function textSpots(text, g) {
+  const out = [];
+  SPOT_RE.lastIndex = 0;
+  let m;
+  while ((m = SPOT_RE.exec(text)) !== null) {
+    const abbr = String(m[1] || "").toUpperCase();
+    const yard = Number(m[2]);
+    if (!abbr) {
+      if (yard === 50) out.push(60);
+      continue;
+    }
+    const u = spotToUnit(abbr, yard, g);
+    if (u != null) out.push(clampUnit(u));
+  }
+  return out;
+}
+function playGeom(p, offenseIsHome, homeId, awayId, g) {
   const s = numOrNull(p?.start?.yardsToEndzone);
   const e = numOrNull(p?.end?.yardsToEndzone);
   if (s == null || e == null) return null;
@@ -1243,9 +1260,22 @@ function playGeom(p, offenseIsHome, homeId, awayId) {
     endFrameIsHome = endTeamId === homeId;
   }
   const startFrameIsHome = KICKOFF_PLAY.test(playTypeText(p)) ? !offenseIsHome : offenseIsHome;
+  const playText = String(p?.text || "");
+  const isPenaltyPlay = p?.isPenalty === true || /PENALTY/i.test(playText);
+  const spots = g && !isPenaltyPlay ? textSpots(playText, g) : [];
+  const textEnd = spots.length ? spots[spots.length - 1] : null;
+  let x1 = clampUnit(ytgToUnit(s, startFrameIsHome));
+  const plainScrimmage = !CHANGE_POSS.test(playTypeText(p)) && !FG_PLAY.test(playTypeText(p)) && !isPenaltyPlay;
+  if (plainScrimmage && textEnd != null) {
+    const want = Math.abs(Number(p?.statYardage) || 0);
+    const alt = clampUnit(ytgToUnit(s, !startFrameIsHome));
+    const errA = Math.abs(Math.abs(x1 - textEnd) - want);
+    const errB = Math.abs(Math.abs(alt - textEnd) - want);
+    if (errB + 1 < errA) x1 = alt;
+  }
   return {
-    x1: clampUnit(ytgToUnit(s, startFrameIsHome)),
-    x2: clampUnit(ytgToUnit(e, endFrameIsHome)),
+    x1,
+    x2: textEnd != null ? textEnd : clampUnit(ytgToUnit(e, endFrameIsHome)),
     air: isAirPlay(p),
     penalty: p?.isPenalty === true,
     yards: Number(p?.statYardage) || 0
@@ -1347,9 +1377,20 @@ function segLen(u1, u2, arc) {
 }
 var CATCH_RE = /(?:kicks|punts)[^.]*? to (?:the )?([A-Z]{2,4}) (\d{1,2})/i;
 var INT_RE = /INTERCEPTED.{0,50}? at ([A-Z]{2,4}) (\d{1,2})/i;
+var LOST_FUMBLE = /fumble\s*(?:recovery|return)?\s*\(opponent\)|fumble return touchdown/i;
+var FUMBLE_AT_RE = /FUMBLES?\b.{0,40}?\bat\s+(?:([A-Z]{2,4})\s+)?(\d{1,2})/i;
+var RECOVERED_AT_RE = /RECOVERED by.{0,60}?\bat\s+(?:([A-Z]{2,4})\s+)?(\d{1,2})/i;
+function spotFromMatch(m, g) {
+  if (!m) return null;
+  const abbr = String(m[1] || "").toUpperCase();
+  const yard = Number(m[2]);
+  if (!abbr) return yard === 50 ? 60 : null;
+  const u = spotToUnit(abbr, yard, g);
+  return u == null ? null : clampUnit(u);
+}
 var FAIR_OR_TB = /fair catch|touchback/i;
 function decomposePlay(p, off, g) {
-  const gm = playGeom(p, off.isHome, g.home.id, g.away.id);
+  const gm = playGeom(p, off.isHome, g.home.id, g.away.id, g);
   if (!gm) return null;
   const ink = gm.penalty ? "var(--penalty-yellow)" : "var(--play-ink)";
   const text = String(p?.text || "");
@@ -1375,6 +1416,18 @@ function decomposePlay(p, off, g) {
     if (Math.abs(gm.x2 - at) > 0.5) {
       segs.push({ d: laneLine(at, gm.x2, true), len: segLen(at, gm.x2, false), kind: "return", color: ink });
       badge = `${Math.round(Math.abs(gm.x2 - at))}-Yd Return`;
+    }
+  } else if (LOST_FUMBLE.test(tType)) {
+    const fumbleAt = spotFromMatch(text.match(FUMBLE_AT_RE), g) ?? gm.x1;
+    const recovAt = spotFromMatch(text.match(RECOVERED_AT_RE), g) ?? gm.x2;
+    if (Math.abs(fumbleAt - gm.x1) > 0.5) {
+      segs.push({ d: laneLine(gm.x1, fumbleAt, false), len: segLen(gm.x1, fumbleAt, false), kind: "ground", color: ink });
+    }
+    const dir = off.isHome ? 1 : -1;
+    segs.push({ d: loopPath(recovAt, dir), len: 18, kind: "loop", color: ink });
+    if (Math.abs(gm.x2 - recovAt) > 0.5) {
+      segs.push({ d: laneLine(recovAt, gm.x2, true), len: segLen(recovAt, gm.x2, false), kind: "return", color: ink });
+      badge = `${Math.round(Math.abs(gm.x2 - recovAt))}-Yd Return`;
     }
   } else if (kickish) {
     const m = text.match(CATCH_RE);
@@ -1407,15 +1460,15 @@ function decomposePlay(p, off, g) {
   }
   return { segs, xMark, badge, endUnit };
 }
-var durOf = (len) => Math.max(700, Math.min(2100, len * 7));
+var durOf = (len) => Math.max(820, Math.min(2400, len * 8));
 function ballShape() {
-  return `<ellipse rx="5" ry="3.2" fill="#7a4a26" stroke="#4c2f17" stroke-width="0.8"/><line x1="-2" y1="0" x2="2" y2="0" stroke="#f0e6d8" stroke-width="0.7"/>`;
+  return `<ellipse rx="5.9" ry="3.8" fill="#141414" stroke="#000" stroke-width="0.8"/><line x1="-2.4" y1="0" x2="2.4" y2="0" stroke="#f4f0e8" stroke-width="0.85"/>`;
 }
 function pinMarkup(team, u) {
   const x = xLane(u).toFixed(1);
   const local = `/teams/${encodeURIComponent(team.id)}.png`;
   const T = FB.T;
-  return `<g class="fv-pin-g" transform="translate(${x} 0)"><path class="fv-pin-tail" d="M -5 ${T + 7} L 0 ${T + 18} L 5 ${T + 7} Z"/><circle class="fv-pin-bubble" cy="${T - 5}" r="13"/><text class="fv-pin-abbr" y="${T - 1.5}" text-anchor="middle">${escapeHtml(team.abbr)}</text><image href="${local}" x="-10" y="${T - 15}" width="20" height="20" preserveAspectRatio="xMidYMid meet" onerror="this.remove();this.parentNode&&this.parentNode.classList.add('no-logo')"/></g>`;
+  return `<g class="fv-pin-g" transform="translate(${x} 0)"><path class="fv-pin-tail" d="M -5.6 ${T + 7} L 0 ${T + 19} L 5.6 ${T + 7} Z"/><circle class="fv-pin-bubble" cy="${T - 6}" r="15.5"/><text class="fv-pin-abbr" y="${T - 2.5}" text-anchor="middle">${escapeHtml(team.abbr)}</text><image href="${local}" x="-12" y="${T - 18} " width="24" height="24" preserveAspectRatio="xMidYMid meet" onerror="this.remove();this.parentNode&&this.parentNode.classList.add('no-logo')"/></g>`;
 }
 function fitEzNames() {
   const USABLE = Math.hypot(27, FB.B - FB.T) * 0.82;
@@ -1464,6 +1517,13 @@ function renderFieldViz(summary, g, sit) {
     const e = numOrNull(last?.end?.yardsToEndzone);
     if (e != null) spot = clampUnit(ytgToUnit(e, playOff.isHome));
   }
+  {
+    const pm = String(sit?.possText || "").trim().match(/^([A-Z]{2,4})\s+(\d{1,2})$/);
+    if (pm) {
+      const u = spotToUnit(pm[1].toUpperCase(), Number(pm[2]), g);
+      if (u != null) spot = clampUnit(u);
+    }
+  }
   if (spot == null && sit && sit.yardsToEndzone != null) {
     spot = clampUnit(ytgToUnit(sit.yardsToEndzone, off.isHome));
   }
@@ -1481,15 +1541,15 @@ function renderFieldViz(summary, g, sit) {
   let out = "";
   if (viz && viz.segs.length) {
     if (isNewPlay) {
-      let begin = 140;
+      let begin = 170;
       const mid = "fvm" + Date.now();
       let defs = "";
       viz.segs.forEach((seg, i) => {
         const dur = durOf(seg.len);
-        defs += `<mask id="${mid}-${i}" maskUnits="userSpaceOnUse"><path d="${seg.d}" fill="none" stroke="#fff" stroke-width="10" stroke-linecap="round" pathLength="100" stroke-dasharray="100" stroke-dashoffset="100"><animate attributeName="stroke-dashoffset" from="100" to="0" dur="${dur}ms" begin="${begin}ms" fill="freeze" calcMode="spline" keyTimes="0;1" keySplines="0.25 0.1 0.25 1"/></path></mask>`;
+        defs += `<mask id="${mid}-${i}" maskUnits="userSpaceOnUse"><path d="${seg.d}" fill="none" stroke="#fff" stroke-width="10" stroke-linecap="round" pathLength="100" stroke-dasharray="100" stroke-dashoffset="100"><animate attributeName="stroke-dashoffset" from="100" to="0" dur="${dur}ms" begin="${begin}ms" fill="freeze" calcMode="spline" keyTimes="0;1" keySplines="0.22 0.06 0.2 1"/></path></mask>`;
         out += `<path d="${seg.d}" fill="none" stroke="${seg.color}" stroke-width="2.4" stroke-linecap="round" stroke-dasharray="6 5" mask="url(#${mid}-${i})"/>`;
-        out += `<g opacity="1"><animate attributeName="opacity" from="1" to="0" begin="${begin + dur + 240}ms" dur="380ms" fill="freeze"/><g>${ballShape()}<animateMotion path="${seg.d}" begin="${begin}ms" dur="${dur}ms" fill="freeze" rotate="${seg.kind === "arc" ? "auto" : "0"}" calcMode="spline" keyTimes="0;1" keySplines="0.25 0.1 0.25 1"/></g></g>`;
-        begin += dur + 160;
+        out += `<g opacity="1"><animate attributeName="opacity" from="1" to="0" begin="${begin + dur + 300}ms" dur="440ms" fill="freeze"/><g>${ballShape()}<animateMotion path="${seg.d}" begin="${begin}ms" dur="${dur}ms" fill="freeze" rotate="${seg.kind === "arc" ? "auto" : "0"}" calcMode="spline" keyTimes="0;1" keySplines="0.22 0.06 0.2 1"/></g></g>`;
+        begin += dur + 190;
       });
       chainMs = begin;
       if (viz.xMark != null) {
@@ -1597,6 +1657,19 @@ function replayLastPlay() {
     renderFieldViz(lastSummary, lastGame, sit);
   }
 }
+var SWING_MIN = 7;
+function winProbSwing(summary, playId) {
+  const wp = summary?.winprobability || [];
+  if (!wp.length || !playId) return null;
+  const i = wp.findIndex((w) => String(w?.playId) === String(playId));
+  if (i < 1) return null;
+  const now = Number(wp[i]?.homeWinPercentage);
+  const prev = Number(wp[i - 1]?.homeWinPercentage);
+  if (!isFinite(now) || !isFinite(prev)) return null;
+  const delta = (now - prev) * 100;
+  if (Math.abs(delta) < SWING_MIN) return null;
+  return { pts: Math.round(Math.abs(delta)), towardHome: delta > 0 };
+}
 function renderPlayBanner(summary, g) {
   const pill = $("penalty-pill");
   if (!pill) return;
@@ -1611,12 +1684,20 @@ function renderPlayBanner(summary, g) {
     pill.innerHTML = (team ? `<span class="pb-logo">${logoHtml(team, "pb-logo-img")}</span>` : "") + escapeHtml(name);
     return;
   }
+  const swing = lastReal ? winProbSwing(summary, String(lastReal?.id ?? "")) : null;
+  const swingHtml = swing ? `<span class="pb-swing">${logoHtml(swing.towardHome ? g.home : g.away, "pb-swing-logo")}<span class="pb-swing-val">+${swing.pts}%</span></span>` : "";
   const scorer = lastReal?.scoringPlay === true ? lastReal : null;
   if (scorer) {
     const off = offenseOf(summary, g);
     const label = String(scorer?.type?.text || "Score").toUpperCase();
     pill.className = "play-banner on score";
-    pill.innerHTML = (off ? `<span class="pb-logo">${logoHtml(off.team, "pb-logo-img")}</span>` : "") + escapeHtml(label);
+    pill.innerHTML = (off ? `<span class="pb-logo">${logoHtml(off.team, "pb-logo-img")}</span>` : "") + escapeHtml(label) + swingHtml;
+    return;
+  }
+  if (swing) {
+    const label = String(lastReal?.type?.text || "Big Play").toUpperCase();
+    pill.className = "play-banner on swing";
+    pill.innerHTML = escapeHtml(label) + swingHtml;
     return;
   }
   pill.className = "play-banner";
@@ -1628,10 +1709,12 @@ function renderField(summary, g, sit) {
   renderDriveHeader(summary, g);
   renderPlayBanner(summary, g);
   if (lp) {
-    if (sit?.lastPlayText) {
-      const { last } = lastPlays(summary);
-      const title = String(last?.type?.text || "Last Play");
-      lp.innerHTML = `<div class="lp-head"><span class="lp-title">${escapeHtml(title)}</span><span class="lp-chip">LAST PLAY</span></div>` + escapeHtml(sit.lastPlayText);
+    const { last, lastReal } = lastPlays(summary);
+    const realText = lastReal?.text ? String(lastReal.text) : sit?.lastPlayText || "";
+    if (realText) {
+      const title = String(lastReal?.type?.text || "Last Play");
+      const adminNow = last && isAdminPlay(last) ? String(last?.type?.text || "") : "";
+      lp.innerHTML = (adminNow ? `<div class="lp-event"><span class="lp-event-dot"></span>${escapeHtml(adminNow)}</div>` : "") + `<div class="lp-head"><span class="lp-title">${escapeHtml(title)}</span><span class="lp-chip">LAST PLAY</span></div>` + escapeHtml(realText);
       lp.style.display = "";
     } else lp.style.display = "none";
   }
@@ -1981,31 +2064,60 @@ function buildPlayerPanel(teamId) {
   });
   return out || '<div class="bs-empty">No player stats yet</div>';
 }
+function animateSegSwap(el) {
+  if (!el) return;
+  el.classList.remove("seg-swap");
+  void el.offsetWidth;
+  el.classList.add("seg-swap");
+}
+function syncSegToggle(track, activeIndex, attr, value) {
+  if (!track) return;
+  track.style.setProperty("--seg-i", String(activeIndex));
+  track.setAttribute("data-active", value);
+  track.querySelectorAll(".plays-seg").forEach((seg) => {
+    seg.classList.toggle("is-active", seg.getAttribute(attr) === value);
+  });
+}
+function statsToggleHtml() {
+  return `<div class="plays-toggle" id="stats-toggle" data-active="${statsView}" style="--seg-i:${statsView === "players" ? 1 : 0}"><span class="plays-toggle-thumb"></span><button class="plays-seg${statsView === "team" ? " is-active" : ""}" data-stats="team" type="button">Team</button><button class="plays-seg${statsView === "players" ? " is-active" : ""}" data-stats="players" type="button">Players</button></div>`;
+}
 function renderStatsTab() {
   const g = lastGame;
   const root = $("tab-box");
   if (!g || !root) return;
-  let html = `<div class="plays-toggle" id="stats-toggle" data-active="${statsView}" style="--seg-i:${statsView === "players" ? 1 : 0}"><span class="plays-toggle-thumb"></span><button class="plays-seg${statsView === "team" ? " is-active" : ""}" data-stats="team" type="button">Team</button><button class="plays-seg${statsView === "players" ? " is-active" : ""}" data-stats="players" type="button">Players</button></div>`;
-  if (statsView === "team") {
-    html += `<div class="ts-wrap">${buildTeamCompare(g)}</div>`;
-  } else {
-    html += buildLeaderCards(g);
-    html += `<div class="bs-team-tabs"><button class="bs-team-tab${statsBoxTeam === "away" ? " active" : ""}" data-bs-team="away" type="button"><span class="bs-team-tab-logo">${logoImg(g.away, "bs-team-tab-logo")}</span></button><button class="bs-team-tab${statsBoxTeam === "home" ? " active" : ""}" data-bs-team="home" type="button"><span class="bs-team-tab-logo">${logoImg(g.home, "bs-team-tab-logo")}</span></button></div><div class="bs-panel-wrap"><div class="bs-panel active">` + buildPlayerPanel(statsBoxTeam === "home" ? g.home.id : g.away.id) + `</div></div>`;
-  }
-  root.innerHTML = html;
-  hydrateProxiedImages(root);
-  statsAnimate = false;
-  root.querySelectorAll("#stats-toggle .plays-seg").forEach((seg) => {
-    seg.addEventListener("click", () => {
-      const v = seg.getAttribute("data-stats");
-      if (v === "team" || v === "players") {
+  let toggle = root.querySelector("#stats-toggle");
+  let body = root.querySelector("#stats-body");
+  if (!toggle || !body) {
+    root.innerHTML = statsToggleHtml() + `<div id="stats-body"></div>`;
+    toggle = root.querySelector("#stats-toggle");
+    body = root.querySelector("#stats-body");
+    root.querySelectorAll("#stats-toggle .plays-seg").forEach((seg) => {
+      seg.addEventListener("click", () => {
+        const v = seg.getAttribute("data-stats");
+        if (v !== "team" && v !== "players") return;
+        if (v === statsView) return;
         statsView = v;
         statsAnimate = true;
+        syncSegToggle(toggle, v === "players" ? 1 : 0, "data-stats", v);
         renderStatsTab();
-      }
+      });
     });
-  });
-  root.querySelectorAll(".bs-team-tab").forEach((btn) => {
+  } else {
+    syncSegToggle(toggle, statsView === "players" ? 1 : 0, "data-stats", statsView);
+  }
+  if (!body) return;
+  let html = "";
+  if (statsView === "team") {
+    html = `<div class="ts-wrap">${buildTeamCompare(g)}</div>`;
+  } else {
+    html = buildLeaderCards(g);
+    html += `<div class="bs-team-tabs"><button class="bs-team-tab${statsBoxTeam === "away" ? " active" : ""}" data-bs-team="away" type="button"><span class="bs-team-tab-logo">${logoImg(g.away, "bs-team-tab-logo")}</span></button><button class="bs-team-tab${statsBoxTeam === "home" ? " active" : ""}" data-bs-team="home" type="button"><span class="bs-team-tab-logo">${logoImg(g.home, "bs-team-tab-logo")}</span></button></div><div class="bs-panel-wrap"><div class="bs-panel active">` + buildPlayerPanel(statsBoxTeam === "home" ? g.home.id : g.away.id) + `</div></div>`;
+  }
+  body.innerHTML = html;
+  animateSegSwap(body);
+  hydrateProxiedImages(body);
+  statsAnimate = false;
+  body.querySelectorAll(".bs-team-tab").forEach((btn) => {
     btn.addEventListener("click", () => {
       const t = btn.dataset.bsTeam;
       if (t === "away" || t === "home") {
@@ -2187,6 +2299,7 @@ function setPlaysView(which) {
     seg.classList.toggle("is-active", seg.getAttribute("data-plays") === which);
     const track = seg.closest(".plays-toggle");
     if (track) track.style.setProperty("--seg-i", which === "all" ? "1" : "0");
+    if (track) track.setAttribute("data-active", which);
   });
   const show = which === "all" ? allList : scoringList;
   const hide = which === "all" ? scoringList : allList;
@@ -2526,11 +2639,31 @@ function buildBracketHtml(conf) {
 async function loadStandingsView() {
   const body = $("stand-body");
   if (!body) return;
-  body.innerHTML = '<div class="stand-msg">Loading\u2026</div>';
+  let vt = body.querySelector(".stand-view-toggle");
+  let sbody = body.querySelector("#stand-body");
+  if (!vt || !sbody) {
+    body.innerHTML = `<div class="plays-toggle stand-view-toggle" style="--seg-i:${standView === "bracket" ? 1 : 0}"><span class="plays-toggle-thumb"></span><button class="plays-seg${standView === "standings" ? " is-active" : ""}" data-sv="standings" type="button">Standings</button><button class="plays-seg${standView === "bracket" ? " is-active" : ""}" data-sv="bracket" type="button">Bracket</button></div><div id="stand-body"><div class="stand-msg">Loading\u2026</div></div>`;
+    vt = body.querySelector(".stand-view-toggle");
+    sbody = body.querySelector("#stand-body");
+    vt?.querySelectorAll(".plays-seg").forEach((s) => {
+      s.addEventListener("click", () => {
+        const v = s.getAttribute("data-sv");
+        if (v !== "standings" && v !== "bracket") return;
+        if (v === standView) return;
+        standView = v;
+        syncSegToggle(vt, v === "bracket" ? 1 : 0, "data-sv", v);
+        void loadStandingsView();
+      });
+    });
+  } else {
+    syncSegToggle(vt, standView === "bracket" ? 1 : 0, "data-sv", standView);
+  }
+  if (!sbody) return;
+  const seg = "";
   try {
-    const seg = `<div class="plays-toggle stand-view-toggle" style="--seg-i:${standView === "bracket" ? 1 : 0}"><span class="plays-toggle-thumb"></span><button class="plays-seg${standView === "standings" ? " is-active" : ""}" data-sv="standings" type="button">Standings</button><button class="plays-seg${standView === "bracket" ? " is-active" : ""}" data-sv="bracket" type="button">Bracket</button></div>`;
     if (standView === "bracket") {
-      body.innerHTML = seg + buildBracketHtml(standActiveLeague);
+      sbody.innerHTML = seg + buildBracketHtml(standActiveLeague);
+      animateSegSwap(sbody);
     } else {
       const data = await fetchStandingsData();
       const groups = collectGroups(data).filter((grp) => grp.name.toUpperCase().includes(standActiveLeague) || grp.name.toUpperCase().includes(standActiveLeague === "AFC" ? "AMERICAN" : "NATIONAL"));
@@ -2568,21 +2701,13 @@ async function loadStandingsView() {
           }).join("");
           return `<div class="stand-card"><div class="stand-card-hdr"><span class="stand-card-dot"></span><span class="stand-card-name">${escapeHtml(name)}</span></div><div class="stand-col-hdr"><span>#</span><span class="stand-col-team">Team</span><span>W</span><span>L</span><span>T</span><span class="stand-col-pct">PCT</span></div>` + rows + `</div>`;
         }).join("");
-        body.innerHTML = seg + (cards || '<div class="stand-msg">No standings available.</div>');
+        sbody.innerHTML = seg + (cards || '<div class="stand-msg">No standings available.</div>');
+        animateSegSwap(sbody);
       }
     }
-    body.querySelectorAll(".stand-view-toggle .plays-seg").forEach((s) => {
-      s.addEventListener("click", () => {
-        const v = s.getAttribute("data-sv");
-        if (v === "standings" || v === "bracket") {
-          standView = v;
-          void loadStandingsView();
-        }
-      });
-    });
   } catch (e) {
     reportError("loadStandingsView", e);
-    body.innerHTML = '<div class="stand-msg">Could not load standings.</div>';
+    sbody.innerHTML = '<div class="stand-msg">Could not load standings.</div>';
   }
 }
 function setStandLeague(lg) {
@@ -2873,6 +2998,10 @@ function scheduleNextPoll() {
   if (pollInterval) clearTimeout(pollInterval);
   pollInterval = setTimeout(() => {
     void (async () => {
+      if (document.hidden || eventId == null) {
+        scheduleNextPoll();
+        return;
+      }
       if (lastGame?.phase === "post") {
         finalPollsDone++;
         if (finalPollsDone > 3) {
@@ -2880,7 +3009,7 @@ function scheduleNextPoll() {
           return;
         }
       }
-      if (!document.hidden && eventId != null) await fetchAndRender(eventId);
+      await fetchAndRender(eventId);
       scheduleNextPoll();
     })();
   }, pollDelayMs());
@@ -3000,17 +3129,29 @@ async function offerGamePicker() {
     });
   });
 }
+function renderUnreachableState() {
+  const host = $("loading-state");
+  if (!host || !firstRender) return;
+  host.innerHTML = `
+    <div class="ended-display">
+      <div class="ended-headline">Scoreboard Unavailable</div>
+      <div class="ended-divider"></div>
+      <div class="ended-text">Couldn't reach the scoreboard service. Retrying automatically\u2026</div>
+    </div>`;
+}
 async function fetchAndRender(id) {
   try {
     const res = await fetch(`/api/game/${id}`);
     const data = await res.json();
     if (!data?.header) {
       console.error("Game data unavailable");
+      renderUnreachableState();
       return;
     }
     render(data);
   } catch (e) {
     console.error("fetchAndRender error:", e);
+    renderUnreachableState();
   }
 }
 (async () => {
@@ -3026,9 +3167,7 @@ async function fetchAndRender(id) {
   setupInlinePager();
   $("replay-play-btn")?.addEventListener("click", replayLastPlay);
   document.addEventListener("visibilitychange", () => {
-    if (!document.hidden && pollInterval !== null && eventId != null) {
-      void fetchAndRender(eventId);
-    }
+    if (!document.hidden && eventId != null) void fetchAndRender(eventId);
   });
   eventId = await selectGameForThisPost();
   if (!eventId) {

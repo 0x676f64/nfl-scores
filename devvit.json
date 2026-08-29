@@ -2,7 +2,7 @@
   "$schema": "https://developers.reddit.com/schema/config-file.v1.json",
   "name": "nfl-scores",
   "marketingAssets": {
-    "icon": ""
+    "icon": "assets/nfl-scores-icon.png"
   },
   "permissions": {
     "http": {

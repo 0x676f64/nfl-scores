@@ -822,6 +822,11 @@ const FB = (() => {
     W: 600, TX: 24, TW: 552, // slightly straighter angle than ESPN's 30/540
   };
 })();
+// NOTE: one perspective for every surface, deliberately. An inline-flattened
+// variant was tried and reverted — measurement showed it bought only 24px of
+// far-edge width and no end-zone room, which isn't worth a different-looking
+// field on Reddit (Joe: the current angle already reads well on desktop and
+// on a 6" phone).
 const xB = (u: number): number => (u / 120) * FB.W;
 const xT = (u: number): number => FB.TX + (u / 120) * FB.TW;
 const LANE_F = (FB.B - FB.LANE) / (FB.B - FB.T);
@@ -1004,9 +1009,36 @@ function spotToUnit(abbr: string, yard: number, g: NormGame): number | null {
   return null;
 }
 
+// Every spot mention in a play's text, in order, as absolute field units.
+// This is the ONLY frame-free source of position we have: "LAC 14" states
+// both the yard line and whose territory it's in, so it can't be mirrored
+// (Joe, after a fumble recovery at LAC 14 drew on the Rams' side — end.team
+// framing had put it in the wrong half). Text wins over ytg math wherever
+// it exists; ytg stays the fallback for touchbacks and spotless texts.
+// Team abbr is OPTIONAL because midfield is written bare ("recovered by
+// DET-R.Blackshear at 50."). A bare number is only unambiguous at the 50.
+const SPOT_RE = /\b(?:at|to|from)\s+(?:([A-Z]{2,4})\s+)?(\d{1,2})\b/g;
+
+function textSpots(text: string, g: NormGame): number[] {
+  const out: number[] = [];
+  SPOT_RE.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = SPOT_RE.exec(text)) !== null) {
+    const abbr = String(m[1] || "").toUpperCase();
+    const yard = Number(m[2]);
+    if (!abbr) {
+      if (yard === 50) out.push(60); // midfield, the one spot needing no side
+      continue;
+    }
+    const u = spotToUnit(abbr, yard, g);
+    if (u != null) out.push(clampUnit(u));
+  }
+  return out;
+}
+
 interface PlayGeom { x1: number; x2: number; air: boolean; penalty: boolean; yards: number; }
 
-function playGeom(p: any, offenseIsHome: boolean, homeId: string, awayId: string): PlayGeom | null {
+function playGeom(p: any, offenseIsHome: boolean, homeId: string, awayId: string, g?: NormGame): PlayGeom | null {
   const s = numOrNull(p?.start?.yardsToEndzone);
   const e = numOrNull(p?.end?.yardsToEndzone);
   if (s == null || e == null) return null;
@@ -1023,9 +1055,42 @@ function playGeom(p: any, offenseIsHome: boolean, homeId: string, awayId: string
     endFrameIsHome = endTeamId === homeId;
   }
   const startFrameIsHome = KICKOFF_PLAY.test(playTypeText(p)) ? !offenseIsHome : offenseIsHome;
+
+  // TEXT IS AUTHORITATIVE for the ending spot: the LAST spot named in the
+  // play text is where the ball actually ended ("…RECOVERED by LA-N.Andersen
+  // at LAC 14") — no frames, so it cannot be mirrored. Frame math fills in
+  // when the text names no spot.
+  // EXCEPTION — PENALTIES: "enforced at DET 14" is where the foul was marked
+  // FROM, not where the ball ends (a 5-yard foul from DET 14 ends at DET 9).
+  // ESPN's end.ytg already carries the post-enforcement spot, so penalties
+  // keep the frame math. Verified on a full game: with penalties excluded,
+  // text and frame math agree on 109 of 110 plays, and the one disagreement
+  // was the midfield "at 50" case handled above.
+  const playText = String(p?.text || "");
+  const isPenaltyPlay = p?.isPenalty === true || /PENALTY/i.test(playText);
+  const spots = g && !isPenaltyPlay ? textSpots(playText, g) : [];
+  const textEnd = spots.length ? spots[spots.length - 1]! : null;
+
+  // START-SIDE CONSISTENCY PICK. The live feed corrupts start.team the same
+  // way it corrupts end.team (seen live: a pass AT LAC 14 for no gain drew
+  // its arc from the Rams' 14 — start.ytg was right, start.TEAM was the
+  // defense). So the frame is VALIDATED with arithmetic instead of trusted:
+  // |x1 − x2| must equal the play's own statYardage. x2 is text-derived and
+  // statYardage is absolute, so exactly one of the two possible framings is
+  // consistent. Only plain scrimmage plays qualify — on kicks/turnovers
+  // statYardage is the RETURN, and penalties keep frame math throughout.
+  let x1 = clampUnit(ytgToUnit(s, startFrameIsHome));
+  const plainScrimmage = !CHANGE_POSS.test(playTypeText(p)) && !FG_PLAY.test(playTypeText(p)) && !isPenaltyPlay;
+  if (plainScrimmage && textEnd != null) {
+    const want = Math.abs(Number(p?.statYardage) || 0);
+    const alt = clampUnit(ytgToUnit(s, !startFrameIsHome));
+    const errA = Math.abs(Math.abs(x1 - textEnd) - want);
+    const errB = Math.abs(Math.abs(alt - textEnd) - want);
+    if (errB + 1 < errA) x1 = alt; // mirror only when clearly more consistent
+  }
   return {
-    x1: clampUnit(ytgToUnit(s, startFrameIsHome)),
-    x2: clampUnit(ytgToUnit(e, endFrameIsHome)),
+    x1,
+    x2: textEnd != null ? textEnd : clampUnit(ytgToUnit(e, endFrameIsHome)),
     air: isAirPlay(p),
     penalty: p?.isPenalty === true,
     yards: Number(p?.statYardage) || 0,
@@ -1163,12 +1228,30 @@ function segLen(u1: number, u2: number, arc: boolean): number {
 
 const CATCH_RE = /(?:kicks|punts)[^.]*? to (?:the )?([A-Z]{2,4}) (\d{1,2})/i;
 const INT_RE = /INTERCEPTED.{0,50}? at ([A-Z]{2,4}) (\d{1,2})/i;
+// A LOST fumble is a turnover and should read like one on the field (Joe).
+// ESPN types it "Fumble Recovery (Opponent)" — "(Own)" keeps possession and
+// stays an ordinary play. Both spots come from the text: where it was
+// fumbled, and where the other team recovered.
+const LOST_FUMBLE = /fumble\s*(?:recovery|return)?\s*\(opponent\)|fumble return touchdown/i;
+// NB: use `.` not `[^.]` — player names carry periods ("RECOVERED by
+// CIN-C.Howell at DET 7"), which a dot-excluding class would block.
+const FUMBLE_AT_RE = /FUMBLES?\b.{0,40}?\bat\s+(?:([A-Z]{2,4})\s+)?(\d{1,2})/i;
+const RECOVERED_AT_RE = /RECOVERED by.{0,60}?\bat\s+(?:([A-Z]{2,4})\s+)?(\d{1,2})/i;
+
+function spotFromMatch(m: RegExpMatchArray | null, g: NormGame): number | null {
+  if (!m) return null;
+  const abbr = String(m[1] || "").toUpperCase();
+  const yard = Number(m[2]);
+  if (!abbr) return yard === 50 ? 60 : null; // bare number is only safe at midfield
+  const u = spotToUnit(abbr, yard, g);
+  return u == null ? null : clampUnit(u);
+}
 const FAIR_OR_TB = /fair catch|touchback/i;
 
 // Decompose the last play into performable segments (frame-aware,
 // text-assisted for kicks/punts/INTs).
 function decomposePlay(p: any, off: { team: NormTeam; isHome: boolean }, g: NormGame): PlayViz | null {
-  const gm = playGeom(p, off.isHome, g.home.id, g.away.id);
+  const gm = playGeom(p, off.isHome, g.home.id, g.away.id, g);
   if (!gm) return null;
   const ink = gm.penalty ? "var(--penalty-yellow)" : "var(--play-ink)";
   const text = String(p?.text || "");
@@ -1197,6 +1280,20 @@ function decomposePlay(p: any, off: { team: NormTeam; isHome: boolean }, g: Norm
     if (Math.abs(gm.x2 - at) > 0.5) {
       segs.push({ d: laneLine(at, gm.x2, true), len: segLen(at, gm.x2, false), kind: "return", color: ink });
       badge = `${Math.round(Math.abs(gm.x2 - at))}-Yd Return`;
+    }
+  } else if (LOST_FUMBLE.test(tType)) {
+    // Same grammar as an interception: carry the ball to the fumble spot,
+    // loop to show the change of hands, then return the OTHER way.
+    const fumbleAt = spotFromMatch(text.match(FUMBLE_AT_RE), g) ?? gm.x1;
+    const recovAt = spotFromMatch(text.match(RECOVERED_AT_RE), g) ?? gm.x2;
+    if (Math.abs(fumbleAt - gm.x1) > 0.5) {
+      segs.push({ d: laneLine(gm.x1, fumbleAt, false), len: segLen(gm.x1, fumbleAt, false), kind: "ground", color: ink });
+    }
+    const dir = off.isHome ? 1 : -1; // the RECOVERING team's direction
+    segs.push({ d: loopPath(recovAt, dir), len: 18, kind: "loop", color: ink });
+    if (Math.abs(gm.x2 - recovAt) > 0.5) {
+      segs.push({ d: laneLine(recovAt, gm.x2, true), len: segLen(recovAt, gm.x2, false), kind: "return", color: ink });
+      badge = `${Math.round(Math.abs(gm.x2 - recovAt))}-Yd Return`;
     }
   } else if (kickish) {
     const m = text.match(CATCH_RE);
@@ -1253,11 +1350,16 @@ function decomposePlay(p: any, off: { team: NormTeam; isHome: boolean }, g: Norm
 // Football pacing: unhurried. Short runs still get a real draw (~700ms),
 // long bombs take about two seconds, and each segment breathes before the
 // next begins.
-const durOf = (len: number): number => Math.max(700, Math.min(2100, len * 7));
+// Pacing: football is a slow game and the play should FLOAT (Joe). Nudged up
+// ~15% from 7x/700-2100 — enough to feel unhurried, not enough to lag the
+// 10s poll cadence (worst case ~2.4s + gaps still lands well inside it).
+const durOf = (len: number): number => Math.max(820, Math.min(2400, len * 8));
 
 function ballShape(): string {
-  return `<ellipse rx="5" ry="3.2" fill="#7a4a26" stroke="#4c2f17" stroke-width="0.8"/>` +
-    `<line x1="-2" y1="0" x2="2" y2="0" stroke="#f0e6d8" stroke-width="0.7"/>`;
+  // Black ball, a touch larger (Joe) — the brown read as mud at phone size.
+  // Laces stay light so the ball still has a readable centre against dark.
+  return `<ellipse rx="5.9" ry="3.8" fill="#141414" stroke="#000" stroke-width="0.8"/>` +
+    `<line x1="-2.4" y1="0" x2="2.4" y2="0" stroke="#f4f0e8" stroke-width="0.85"/>`;
 }
 
 function pinMarkup(team: NormTeam, u: number): string {
@@ -1268,10 +1370,10 @@ function pinMarkup(team: NormTeam, u: number): string {
   // hidden until the image actually errors (logos with transparency were
   // letting it show through, per Joe).
   return `<g class="fv-pin-g" transform="translate(${x} 0)">` +
-    `<path class="fv-pin-tail" d="M -5 ${T + 7} L 0 ${T + 18} L 5 ${T + 7} Z"/>` +
-    `<circle class="fv-pin-bubble" cy="${T - 5}" r="13"/>` +
-    `<text class="fv-pin-abbr" y="${T - 1.5}" text-anchor="middle">${escapeHtml(team.abbr)}</text>` +
-    `<image href="${local}" x="-10" y="${T - 15}" width="20" height="20" preserveAspectRatio="xMidYMid meet"` +
+    `<path class="fv-pin-tail" d="M -5.6 ${T + 7} L 0 ${T + 19} L 5.6 ${T + 7} Z"/>` +
+    `<circle class="fv-pin-bubble" cy="${T - 6}" r="15.5"/>` +
+    `<text class="fv-pin-abbr" y="${T - 2.5}" text-anchor="middle">${escapeHtml(team.abbr)}</text>` +
+    `<image href="${local}" x="-12" y="${T - 18} " width="24" height="24" preserveAspectRatio="xMidYMid meet"` +
     ` onerror="this.remove();this.parentNode&&this.parentNode.classList.add('no-logo')"/>` +
     `</g>`;
 }
@@ -1346,6 +1448,17 @@ function renderFieldViz(summary: any, g: NormGame, sit: Situation | null): void 
     const e = numOrNull(last?.end?.yardsToEndzone);
     if (e != null) spot = clampUnit(ytgToUnit(e, playOff.isHome));
   }
+  // ABSOLUTE ANCHOR for the LOS: ESPN's possessionText ("LAC 14") names the
+  // spot with a team abbr — spotToUnit maps it frame-free. When present it
+  // outranks everything above, covering play types the geometry cannot
+  // validate (e.g. incompletions, where start and end are the same ytg).
+  {
+    const pm = String(sit?.possText || "").trim().match(/^([A-Z]{2,4})\s+(\d{1,2})$/);
+    if (pm) {
+      const u = spotToUnit(pm[1]!.toUpperCase(), Number(pm[2]), g);
+      if (u != null) spot = clampUnit(u);
+    }
+  }
   if (spot == null && sit && sit.yardsToEndzone != null) {
     spot = clampUnit(ytgToUnit(sit.yardsToEndzone, off.isHome));
   }
@@ -1365,7 +1478,7 @@ function renderFieldViz(summary: any, g: NormGame, sit: Situation | null): void 
   let out = "";
   if (viz && viz.segs.length) {
     if (isNewPlay) {
-      let begin = 140;
+      let begin = 170;
       const mid = "fvm" + Date.now();
       let defs = "";
       viz.segs.forEach((seg, i) => {
@@ -1374,14 +1487,14 @@ function renderFieldViz(summary: any, g: NormGame, sit: Situation | null): void 
           `<path d="${seg.d}" fill="none" stroke="#fff" stroke-width="10" stroke-linecap="round"` +
           ` pathLength="100" stroke-dasharray="100" stroke-dashoffset="100">` +
           `<animate attributeName="stroke-dashoffset" from="100" to="0" dur="${dur}ms"` +
-          ` begin="${begin}ms" fill="freeze" calcMode="spline" keyTimes="0;1" keySplines="0.25 0.1 0.25 1"/>` +
+          ` begin="${begin}ms" fill="freeze" calcMode="spline" keyTimes="0;1" keySplines="0.22 0.06 0.2 1"/>` +
           `</path></mask>`;
         out += `<path d="${seg.d}" fill="none" stroke="${seg.color}" stroke-width="2.4"` +
           ` stroke-linecap="round" stroke-dasharray="6 5" mask="url(#${mid}-${i})"/>`;
         // ball rides every segment
-        out += `<g opacity="1"><animate attributeName="opacity" from="1" to="0" begin="${begin + dur + 240}ms" dur="380ms" fill="freeze"/>` +
-          `<g>${ballShape()}<animateMotion path="${seg.d}" begin="${begin}ms" dur="${dur}ms" fill="freeze" rotate="${seg.kind === "arc" ? "auto" : "0"}" calcMode="spline" keyTimes="0;1" keySplines="0.25 0.1 0.25 1"/></g></g>`;
-        begin += dur + 160;
+        out += `<g opacity="1"><animate attributeName="opacity" from="1" to="0" begin="${begin + dur + 300}ms" dur="440ms" fill="freeze"/>` +
+          `<g>${ballShape()}<animateMotion path="${seg.d}" begin="${begin}ms" dur="${dur}ms" fill="freeze" rotate="${seg.kind === "arc" ? "auto" : "0"}" calcMode="spline" keyTimes="0;1" keySplines="0.22 0.06 0.2 1"/></g></g>`;
+        begin += dur + 190; // a touch more air between segments
       });
       chainMs = begin;
       if (viz.xMark != null) {
@@ -1507,6 +1620,23 @@ function replayLastPlay(): void {
   }
 }
 
+// The swing this play caused, in home-win-probability points. ESPN keys
+// winprobability by playId, so the delta is (this play) - (the one before).
+// Only big swings are worth showing — small ones are noise.
+const SWING_MIN = 7; // percentage points
+function winProbSwing(summary: any, playId: string): { pts: number; towardHome: boolean } | null {
+  const wp: any[] = summary?.winprobability || [];
+  if (!wp.length || !playId) return null;
+  const i = wp.findIndex((w: any) => String(w?.playId) === String(playId));
+  if (i < 1) return null;
+  const now = Number(wp[i]?.homeWinPercentage);
+  const prev = Number(wp[i - 1]?.homeWinPercentage);
+  if (!isFinite(now) || !isFinite(prev)) return null;
+  const delta = (now - prev) * 100;
+  if (Math.abs(delta) < SWING_MIN) return null;
+  return { pts: Math.round(Math.abs(delta)), towardHome: delta > 0 };
+}
+
 function renderPlayBanner(summary: any, g: NormGame): void {
   const pill = $("penalty-pill");
   if (!pill) return;
@@ -1522,13 +1652,30 @@ function renderPlayBanner(summary: any, g: NormGame): void {
       escapeHtml(name);
     return;
   }
+  // Big swings get a chip regardless of play type — a turnover or a 4th-down
+  // stop can move the needle harder than a score (Joe: the live feed is the
+  // main attraction; this is the moment people screenshot).
+  const swing = lastReal ? winProbSwing(summary, String(lastReal?.id ?? "")) : null;
+  const swingHtml = swing
+    ? `<span class="pb-swing">${logoHtml(swing.towardHome ? g.home : g.away, "pb-swing-logo")}` +
+      `<span class="pb-swing-val">+${swing.pts}%</span></span>`
+    : "";
+
   const scorer = lastReal?.scoringPlay === true ? lastReal : null;
   if (scorer) {
     const off = offenseOf(summary, g);
     const label = String(scorer?.type?.text || "Score").toUpperCase();
     pill.className = "play-banner on score";
     pill.innerHTML = (off ? `<span class="pb-logo">${logoHtml(off.team, "pb-logo-img")}</span>` : "") +
-      escapeHtml(label);
+      escapeHtml(label) + swingHtml;
+    return;
+  }
+  // Non-scoring play that still moved the needle hard (turnover, 4th-down
+  // stop, explosive gain): the swing alone earns the banner.
+  if (swing) {
+    const label = String(lastReal?.type?.text || "Big Play").toUpperCase();
+    pill.className = "play-banner on swing";
+    pill.innerHTML = escapeHtml(label) + swingHtml;
     return;
   }
   pill.className = "play-banner";
@@ -1542,11 +1689,19 @@ function renderField(summary: any, g: NormGame, sit: Situation | null): void {
   renderPlayBanner(summary, g);
 
   if (lp) {
-    if (sit?.lastPlayText) {
-      const { last } = lastPlays(summary);
-      const title = String(last?.type?.text || "Last Play");
-      lp.innerHTML = `<div class="lp-head"><span class="lp-title">${escapeHtml(title)}</span>` +
-        `<span class="lp-chip">LAST PLAY</span></div>` + escapeHtml(sit.lastPlayText);
+    const { last, lastReal } = lastPlays(summary);
+    // "LAST PLAY" must always be an actual PLAY. Official timeouts, the
+    // two-minute warning and end-of-period markers are game EVENTS: show
+    // them as a separate status line above, but never as the last play
+    // (Joe). lastReal already excludes admin events everywhere else.
+    const realText = lastReal?.text ? String(lastReal.text) : (sit?.lastPlayText || "");
+    if (realText) {
+      const title = String(lastReal?.type?.text || "Last Play");
+      const adminNow = last && isAdminPlay(last) ? String(last?.type?.text || "") : "";
+      lp.innerHTML =
+        (adminNow ? `<div class="lp-event"><span class="lp-event-dot"></span>${escapeHtml(adminNow)}</div>` : "") +
+        `<div class="lp-head"><span class="lp-title">${escapeHtml(title)}</span>` +
+        `<span class="lp-chip">LAST PLAY</span></div>` + escapeHtml(realText);
       lp.style.display = "";
     } else lp.style.display = "none";
   }
@@ -2002,20 +2157,70 @@ function buildPlayerPanel(teamId: string): string {
   return out || '<div class="bs-empty">No player stats yet</div>';
 }
 
+// Segmented toggles must PERSIST across content re-renders — a toggle
+// rebuilt by innerHTML is a brand-new element that starts at its new
+// --seg-i, so the thumb has nothing to slide FROM. The Plays toggle lives
+// in the shell and animated for free; Stats/Standings rebuilt themselves
+// and jumped. This helper keeps one element and just updates its state.
+// Content beneath a segmented toggle fades/rises in on every swap, so the
+// switch reads as a transition rather than a hard cut.
+function animateSegSwap(el: HTMLElement | null): void {
+  if (!el) return;
+  el.classList.remove("seg-swap");
+  void el.offsetWidth; // reflow so the animation restarts
+  el.classList.add("seg-swap");
+}
+
+function syncSegToggle(track: HTMLElement | null, activeIndex: number, attr: string, value: string): void {
+  if (!track) return;
+  track.style.setProperty("--seg-i", String(activeIndex));
+  track.setAttribute("data-active", value);
+  track.querySelectorAll<HTMLElement>(".plays-seg").forEach((seg) => {
+    seg.classList.toggle("is-active", seg.getAttribute(attr) === value);
+  });
+}
+
+function statsToggleHtml(): string {
+  return `<div class="plays-toggle" id="stats-toggle" data-active="${statsView}" style="--seg-i:${statsView === "players" ? 1 : 0}">` +
+    `<span class="plays-toggle-thumb"></span>` +
+    `<button class="plays-seg${statsView === "team" ? " is-active" : ""}" data-stats="team" type="button">Team</button>` +
+    `<button class="plays-seg${statsView === "players" ? " is-active" : ""}" data-stats="players" type="button">Players</button></div>`;
+}
+
 function renderStatsTab(): void {
   const g = lastGame;
   const root = $("tab-box");
   if (!g || !root) return;
 
-  let html = `<div class="plays-toggle" id="stats-toggle" data-active="${statsView}" style="--seg-i:${statsView === "players" ? 1 : 0}">` +
-    `<span class="plays-toggle-thumb"></span>` +
-    `<button class="plays-seg${statsView === "team" ? " is-active" : ""}" data-stats="team" type="button">Team</button>` +
-    `<button class="plays-seg${statsView === "players" ? " is-active" : ""}" data-stats="players" type="button">Players</button></div>`;
-
-  if (statsView === "team") {
-    html += `<div class="ts-wrap">${buildTeamCompare(g)}</div>`;
+  // Build (or keep) the toggle, then swap ONLY the body beneath it.
+  let toggle = root.querySelector<HTMLElement>("#stats-toggle");
+  let body = root.querySelector<HTMLElement>("#stats-body");
+  if (!toggle || !body) {
+    root.innerHTML = statsToggleHtml() + `<div id="stats-body"></div>`;
+    toggle = root.querySelector<HTMLElement>("#stats-toggle");
+    body = root.querySelector<HTMLElement>("#stats-body");
+    root.querySelectorAll<HTMLElement>("#stats-toggle .plays-seg").forEach((seg) => {
+      seg.addEventListener("click", () => {
+        const v = seg.getAttribute("data-stats");
+        if (v !== "team" && v !== "players") return;
+        if (v === statsView) return;
+        statsView = v;
+        statsAnimate = true;
+        // Slide the thumb NOW (the element survives), then re-render below.
+        syncSegToggle(toggle, v === "players" ? 1 : 0, "data-stats", v);
+        renderStatsTab();
+      });
+    });
   } else {
-    html += buildLeaderCards(g);
+    syncSegToggle(toggle, statsView === "players" ? 1 : 0, "data-stats", statsView);
+  }
+  if (!body) return;
+
+  let html = "";
+  if (statsView === "team") {
+    html = `<div class="ts-wrap">${buildTeamCompare(g)}</div>`;
+  } else {
+    html = buildLeaderCards(g);
     html += `<div class="bs-team-tabs">` +
       `<button class="bs-team-tab${statsBoxTeam === "away" ? " active" : ""}" data-bs-team="away" type="button">` +
       `<span class="bs-team-tab-logo">${logoImg(g.away, "bs-team-tab-logo")}</span></button>` +
@@ -2024,17 +2229,12 @@ function renderStatsTab(): void {
       `<div class="bs-panel-wrap"><div class="bs-panel active">` +
       buildPlayerPanel(statsBoxTeam === "home" ? g.home.id : g.away.id) + `</div></div>`;
   }
-  root.innerHTML = html;
-  hydrateProxiedImages(root);
+  body.innerHTML = html;
+  animateSegSwap(body);
+  hydrateProxiedImages(body);
   statsAnimate = false; // consumed
 
-  root.querySelectorAll<HTMLElement>("#stats-toggle .plays-seg").forEach((seg) => {
-    seg.addEventListener("click", () => {
-      const v = seg.getAttribute("data-stats");
-      if (v === "team" || v === "players") { statsView = v; statsAnimate = true; renderStatsTab(); }
-    });
-  });
-  root.querySelectorAll<HTMLElement>(".bs-team-tab").forEach((btn) => {
+  body.querySelectorAll<HTMLElement>(".bs-team-tab").forEach((btn) => {
     btn.addEventListener("click", () => {
       const t = btn.dataset.bsTeam;
       if (t === "away" || t === "home") { statsBoxTeam = t; renderStatsTab(); }
@@ -2266,6 +2466,7 @@ function setPlaysView(which: "scoring" | "all"): void {
     seg.classList.toggle("is-active", seg.getAttribute("data-plays") === which);
     const track = seg.closest<HTMLElement>(".plays-toggle");
     if (track) track.style.setProperty("--seg-i", which === "all" ? "1" : "0");
+    if (track) track.setAttribute("data-active", which);
   });
   const show = which === "all" ? allList : scoringList;
   const hide = which === "all" ? scoringList : allList;
@@ -2627,15 +2828,38 @@ function buildBracketHtml(conf: string): string {
 async function loadStandingsView(): Promise<void> {
   const body = $("stand-body");
   if (!body) return;
-  body.innerHTML = '<div class="stand-msg">Loading…</div>';
-  try {
-    const seg = `<div class="plays-toggle stand-view-toggle" style="--seg-i:${standView === "bracket" ? 1 : 0}">` +
+  // Mount the toggle ONCE so its thumb can slide between views (a rebuilt
+  // toggle has no previous position to animate from); only #stand-body swaps.
+  let vt = body.querySelector<HTMLElement>(".stand-view-toggle");
+  let sbody = body.querySelector<HTMLElement>("#stand-body");
+  if (!vt || !sbody) {
+    body.innerHTML = `<div class="plays-toggle stand-view-toggle" style="--seg-i:${standView === "bracket" ? 1 : 0}">` +
       `<span class="plays-toggle-thumb"></span>` +
       `<button class="plays-seg${standView === "standings" ? " is-active" : ""}" data-sv="standings" type="button">Standings</button>` +
-      `<button class="plays-seg${standView === "bracket" ? " is-active" : ""}" data-sv="bracket" type="button">Bracket</button></div>`;
+      `<button class="plays-seg${standView === "bracket" ? " is-active" : ""}" data-sv="bracket" type="button">Bracket</button></div>` +
+      `<div id="stand-body"><div class="stand-msg">Loading…</div></div>`;
+    vt = body.querySelector<HTMLElement>(".stand-view-toggle");
+    sbody = body.querySelector<HTMLElement>("#stand-body");
+    vt?.querySelectorAll<HTMLElement>(".plays-seg").forEach((s) => {
+      s.addEventListener("click", () => {
+        const v = s.getAttribute("data-sv");
+        if (v !== "standings" && v !== "bracket") return;
+        if (v === standView) return;
+        standView = v;
+        syncSegToggle(vt, v === "bracket" ? 1 : 0, "data-sv", v);
+        void loadStandingsView();
+      });
+    });
+  } else {
+    syncSegToggle(vt, standView === "bracket" ? 1 : 0, "data-sv", standView);
+  }
+  if (!sbody) return;
+  const seg = ""; // toggle is persistent now; content-only below
+  try {
 
     if (standView === "bracket") {
-      body.innerHTML = seg + buildBracketHtml(standActiveLeague);
+      sbody.innerHTML = seg + buildBracketHtml(standActiveLeague);
+      animateSegSwap(sbody);
     } else {
       const data = await fetchStandingsData();
       const groups = collectGroups(data).filter((grp) =>
@@ -2681,18 +2905,13 @@ async function loadStandingsView(): Promise<void> {
             `<div class="stand-col-hdr"><span>#</span><span class="stand-col-team">Team</span><span>W</span><span>L</span><span>T</span><span class="stand-col-pct">PCT</span></div>` +
             rows + `</div>`;
         }).join("");
-        body.innerHTML = seg + (cards || '<div class="stand-msg">No standings available.</div>');
+        sbody.innerHTML = seg + (cards || '<div class="stand-msg">No standings available.</div>');
+        animateSegSwap(sbody);
       }
     }
-    body.querySelectorAll<HTMLElement>(".stand-view-toggle .plays-seg").forEach((s) => {
-      s.addEventListener("click", () => {
-        const v = s.getAttribute("data-sv");
-        if (v === "standings" || v === "bracket") { standView = v; void loadStandingsView(); }
-      });
-    });
   } catch (e) {
     reportError("loadStandingsView", e);
-    body.innerHTML = '<div class="stand-msg">Could not load standings.</div>';
+    sbody.innerHTML = '<div class="stand-msg">Could not load standings.</div>';
   }
 }
 
@@ -2976,12 +3195,15 @@ function scheduleNextPoll(): void {
   pollInterval = setTimeout(() => {
     void (async (): Promise<void> => {
       // Final games: confirm a couple of times (late stat corrections), then
-      // stop polling altogether — nothing more is coming.
+      // stop polling altogether — nothing more is coming. Only count a
+      // confirmation we ACTUALLY made: a backgrounded tab used to burn all
+      // three without fetching, then stop polling for good.
+      if (document.hidden || eventId == null) { scheduleNextPoll(); return; }
       if (lastGame?.phase === "post") {
         finalPollsDone++;
         if (finalPollsDone > 3) { stopPolling(); return; }
       }
-      if (!document.hidden && eventId != null) await fetchAndRender(eventId);
+      await fetchAndRender(eventId);
       scheduleNextPoll();
     })();
   }, pollDelayMs());
@@ -3110,17 +3332,32 @@ async function offerGamePicker(): Promise<void> {
   });
 }
 
+function renderUnreachableState(): void {
+  const host = $("loading-state");
+  if (!host || !firstRender) return; // only before anything has painted
+  host.innerHTML = `
+    <div class="ended-display">
+      <div class="ended-headline">Scoreboard Unavailable</div>
+      <div class="ended-divider"></div>
+      <div class="ended-text">Couldn't reach the scoreboard service. Retrying automatically…</div>
+    </div>`;
+}
+
 async function fetchAndRender(id: string): Promise<void> {
   try {
     const res = await fetch(`/api/game/${id}`);
     const data = await res.json();
     if (!data?.header) {
       console.error("Game data unavailable");
+      // Never painted and the payload is unusable → say so instead of
+      // leaving the spinner up forever (polling keeps retrying).
+      renderUnreachableState();
       return;
     }
     render(data);
   } catch (e) {
     console.error("fetchAndRender error:", e);
+    renderUnreachableState();
   }
 }
 
@@ -3138,9 +3375,9 @@ async function fetchAndRender(id: string): Promise<void> {
   $("replay-play-btn")?.addEventListener("click", replayLastPlay);
 
   document.addEventListener("visibilitychange", () => {
-    if (!document.hidden && pollInterval !== null && eventId != null) {
-      void fetchAndRender(eventId);
-    }
+    // Refresh on return even if polling has stopped (terminal game): cheap,
+    // once, and guarantees the view isn't stale after a long background.
+    if (!document.hidden && eventId != null) void fetchAndRender(eventId);
   });
 
   eventId = await selectGameForThisPost();

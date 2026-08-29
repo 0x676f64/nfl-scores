@@ -2221,6 +2221,15 @@ body.is-inline #inline-pager.pager-active { display: flex; }
   border: 1px solid var(--nfl-navy);
   border-radius: 999px;
 }
+/* LIGHT MODE: --accent-dim is translucent, and over the navy track it
+   blends to a deep maroon (#771323) — far darker than the same value over
+   dark mode's white track (#e87878). Light mode gets an OPAQUE tone matching
+   the dark-mode look, one notch deeper (Joe). Applies to every toggle thumb. */
+[data-theme="light"] .plays-toggle-thumb {
+  background: #d16c6c;
+  box-shadow: 0 1px 6px rgba(160, 40, 40, 0.28);
+}
+
 .plays-toggle-thumb {
   position: absolute;
   top: 2px;
@@ -2257,6 +2266,9 @@ body.is-inline #inline-pager.pager-active { display: flex; }
 
 /* Newly-shown list fades + slides up on each toggle */
 .plays-list-enter { animation: playsListEnter 0.3s ease; }
+/* Same enter for content under the Stats/Standings toggles, so every
+   segmented switch in the app moves identically (Joe: uniform animation). */
+.seg-swap { animation: playsListEnter 0.3s ease; }
 @keyframes playsListEnter {
   from { opacity: 0; transform: translateY(10px); }
   to { opacity: 1; transform: translateY(0); }
@@ -2472,7 +2484,9 @@ body.on-standings-tab .weather-strip { max-height: 0; opacity: 0; padding-top: 0
 
 /* field — flat SVG, ESPN coordinate system (perspective baked in).
    Full-bleed: the field escapes the pane's side padding for maximum width. */
-.fieldwrap { margin: 0 calc(-1 * var(--space-md) + 4px); }
+/* Snug: the 12px top pad was dead space above the field, and the pin now
+   has its own headroom inside the viewBox (Joe — dead space hurts us). */
+.fieldwrap { padding: 0; margin: 0 calc(-1 * var(--space-md) + 4px); }
 .field-svg { width: 100%; height: auto; display: block; overflow: visible; }
 .fv-sideoverlay { fill: rgba(10, 24, 40, 0.26); }
 .fv-band { fill: #f7f8f9; }
@@ -2489,9 +2503,12 @@ body.on-standings-tab .weather-strip { max-height: 0; opacity: 0; padding-top: 0
 .fv-driveline { stroke: var(--play-ink); stroke-width: 1.6; stroke-linecap: round; opacity: 0.4; fill: none; }
 .fv-arrow { fill: var(--play-ink); }
 .fv-x { stroke: #d50a0a; stroke-width: 2.6; stroke-linecap: round; fill: none; }
-.fv-pin-bubble { fill: #fff; stroke: #14181d; stroke-width: 1.6; }
+.fv-pin-bubble {
+  fill: #fff; stroke: #14181d; stroke-width: 1.9;
+  filter: drop-shadow(0 1.5px 2px rgba(10, 24, 40, 0.35));
+}
 .fv-pin-tail { fill: #14181d; }
-.fv-pin-abbr { fill: #5b6474; font-family: var(--font-mono); font-size: 8px; font-weight: 700; }
+.fv-pin-abbr { fill: #5b6474; font-family: var(--font-mono); font-size: 9.5px; font-weight: 700; }
 .fv-chipbg { fill: #14181d; }
 .fv-chipbg.pen { fill: var(--penalty-yellow); }
 .fv-chiptext { fill: #fff; font-family: var(--font-mono); font-size: 9px; font-weight: 700; letter-spacing: .04em; }
@@ -3160,15 +3177,31 @@ body.is-inline .pg-odd-fill .pg-odd-v { font-size: 18px; }
 body.is-inline .pg-inj-wrap { gap: 5px; margin: 8px auto 2px; }
 body.is-inline .pg-inj-btn { padding: 6px 9px; gap: 7px; }
 body.is-inline .pg-inj-logo { width: 26px; height: 26px; }
+
+/* LIGHT MODE only: the card is filled with the team's own color, so a logo
+   drawn in that same color disappears into it (Jets green on Jets green —
+   Joe; the same trap waits for Packers, Seahawks, Eagles, etc). A frosted
+   disc behind the mark restores contrast for every team without touching
+   the logo art. Dark-mode cards are transparent, so no disc is needed. */
+[data-theme="light"] .pg-inj-logo {
+  background: rgba(255, 255, 255, 0.94);
+  border-radius: 50%;
+  padding: 3px;
+  box-sizing: border-box;
+  box-shadow: 0 1px 3px rgba(10, 24, 40, 0.18);
+}
 body.is-inline .pg-inj-label { font-size: 11.5px; }
 body.is-inline .pg-inj-count { font-size: 10px; padding: 0 6px; }
 
 /* ── red-zone tint: the attacked 20 glows pale red (ESPN parity) ────── */
 .fv-rz {
-  fill: rgba(213, 10, 10, 0.377);
+  /* Deeper, more solid than the first pass (Joe) — still a tint, not a
+     red block: opacity up and the hue pulled toward a warmer, denser red
+     so it reads as a zone rather than a wash. */
+  fill: rgba(196, 30, 42, 0.20);
   animation: fv-rz-in 0.45s var(--ease-out);
 }
-:root:not([data-theme="light"]) .fv-rz { fill: rgba(213, 10, 10, 0.18); }
+:root:not([data-theme="light"]) .fv-rz { fill: rgba(213, 40, 50, 0.28); }
 @keyframes fv-rz-in { from { opacity: 0; } to { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .fv-rz { animation: none; } }
 
@@ -3192,3 +3225,43 @@ body.is-inline .pg-inj-count { font-size: 10px; padding: 0 6px; }
 /* used = hollow, ring stays so the count is still readable */
 .to-dot.to-used { background: transparent; }
 [data-theme="light"] .to-dot { opacity: 0.8; }
+
+@media (prefers-reduced-motion: reduce) { .seg-swap { animation: none; } }
+
+/* ── admin events (official timeout, two-minute warning, end of period) ──
+   Shown above the last play as a status line — never AS the last play. */
+.lp-event {
+  display: flex; align-items: center; gap: 6px;
+  font-family: var(--font-mono); font-size: 9.5px; font-weight: 700;
+  letter-spacing: .1em; text-transform: uppercase;
+  color: var(--text-muted); margin-bottom: 5px;
+}
+.lp-event-dot {
+  width: 5px; height: 5px; border-radius: 50%;
+  background: var(--accent-dim); flex: 0 0 auto;
+  animation: lpEventPulse 1.8s ease-in-out infinite;
+}
+@keyframes lpEventPulse { 0%,100% { opacity: .45; } 50% { opacity: 1; } }
+
+/* ── win-probability swing chip on the play banner ────────────────────── */
+.pb-swing {
+  display: inline-flex; align-items: center; gap: 4px;
+  margin-left: 8px; padding: 2px 7px 2px 4px;
+  background: rgba(255, 255, 255, 0.16);
+  border-radius: 999px; vertical-align: middle;
+}
+.pb-swing-logo { width: 14px; height: 14px; object-fit: contain; }
+.pb-swing-val {
+  font-family: var(--font-display); font-weight: 800; font-size: 11px;
+  letter-spacing: .02em; color: inherit;
+}
+[data-theme="light"] .play-banner:not(.on) .pb-swing,
+[data-theme="light"] .play-banner.on.swing .pb-swing { background: rgba(10, 24, 40, 0.10); }
+
+/* a big non-scoring swing still earns the banner */
+.play-banner.on.swing {
+  background: var(--bg-elev-2);
+  color: var(--text-primary);
+  border: 1px solid var(--border-subtle);
+}
+@media (prefers-reduced-motion: reduce) { .lp-event-dot { animation: none; } }
