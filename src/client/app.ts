@@ -2622,6 +2622,10 @@ async function renderWinProbInner(): Promise<void> {
   const polyPts = [`${PL},${midY}`, ...pts.map((p) => `${p.x},${p.y}`), `${PL + CW},${midY}`].join(" ");
 
   const light = document.documentElement.getAttribute("data-theme") === "light";
+  // Team-filled areas need a separator from the chart background: a navy
+  // team's fill vanishes into dark mode, and a white/silver team washes out
+  // in light mode (Joe). White outline on dark, navy on light.
+  const areaEdge = light ? "rgba(10,24,40,0.55)" : "rgba(255,255,255,0.85)";
   const ink = light
     ? { mid: "rgba(10,24,40,0.30)", strong: "rgba(10,24,40,0.62)", label: "rgba(10,24,40,0.50)", grid: "rgba(10,24,40,0.10)", chartBg: "rgba(10,24,40,0.05)", dotFill: "#0a1828", dotRing: "rgba(10,24,40,0.6)" }
     : { mid: "rgba(255,255,255,0.30)", strong: "rgba(255,255,255,0.55)", label: "rgba(255,255,255,0.45)", grid: "rgba(255,255,255,0.08)", chartBg: "rgba(255,255,255,0.04)", dotFill: "#fff", dotRing: "rgba(255,255,255,0.6)" };
@@ -2665,7 +2669,7 @@ async function renderWinProbInner(): Promise<void> {
 
     <div class="wp-prob-bar">
       <div class="wp-prob-bar-fill" style="width:${awayProbNow}%;background:${awayColor};"></div>
-      <div class="wp-prob-bar-fill" style="width:${homeProbNow}%;background:${homeColor};"></div>
+      <div class="wp-prob-bar-fill wp-prob-bar-home" style="width:${homeProbNow}%;background:${homeColor};"></div>
     </div>
 
     <div class="wp-chart-wrap">
@@ -2676,8 +2680,8 @@ async function renderWinProbInner(): Promise<void> {
           <clipPath id="wp-clip-top"><rect x="${PL}" y="${PT}" width="${CW}" height="${CH / 2}"/></clipPath>
           <clipPath id="wp-clip-bot"><rect x="${PL}" y="${PT + CH / 2}" width="${CW}" height="${CH / 2}"/></clipPath>
         </defs>
-        <polygon points="${polyPts}" fill="${awayColor}" opacity="0.9" clip-path="url(#wp-clip-top)"/>
-        <polygon points="${polyPts}" fill="${homeColor}" opacity="0.9" clip-path="url(#wp-clip-bot)"/>
+        <polygon points="${polyPts}" fill="${awayColor}" opacity="0.9" clip-path="url(#wp-clip-top)" stroke="${areaEdge}" stroke-width="0.9" stroke-linejoin="round"/>
+        <polygon points="${polyPts}" fill="${homeColor}" opacity="0.9" clip-path="url(#wp-clip-bot)" stroke="${areaEdge}" stroke-width="0.9" stroke-linejoin="round"/>
         <line x1="${PL}" y1="${midY}" x2="${PL + CW}" y2="${midY}" stroke="${ink.mid}" stroke-width="1" stroke-dasharray="4,3"/>
         <text x="${PL - 4}" y="${midY + 3}" text-anchor="end" font-size="8" fill="${ink.strong}" font-family="monospace">50%</text>
         <text x="${PL - 4}" y="${PT + 6}" text-anchor="end" font-size="8" fill="${awayColor}" font-family="monospace">${escapeHtml(g.away.abbr)}</text>
