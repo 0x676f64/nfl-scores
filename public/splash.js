@@ -505,6 +505,45 @@ function syncPagerAfterAnimation() {
   scheduleInlinePagerSync();
   [80, 180, 280, 420].forEach((ms) => window.setTimeout(scheduleInlinePagerSync, ms));
 }
+var sitPlacement = null;
+function placeSituationStrip() {
+  const sit = $("situation");
+  const slot = $("dh-sit-slot");
+  const fieldwrap = document.querySelector("#live-content .fieldwrap");
+  if (!sit || !slot || !fieldwrap?.parentNode) return;
+  const want = document.body.classList.contains("is-inline") ? "hdr" : "row";
+  if (want === sitPlacement) return;
+  const visible = sit.style.display !== "none" && sit.offsetParent !== null;
+  const first = visible ? sit.getBoundingClientRect() : null;
+  if (want === "hdr") slot.appendChild(sit);
+  else fieldwrap.parentNode.insertBefore(sit, fieldwrap);
+  sit.classList.toggle("in-hdr", want === "hdr");
+  sitPlacement = want;
+  const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+  if (first && !reduce) {
+    const last = sit.getBoundingClientRect();
+    const dx = first.left - last.left, dy = first.top - last.top;
+    const sx = last.width ? first.width / last.width : 1;
+    if (Math.abs(dx) > 0.5 || Math.abs(dy) > 0.5 || Math.abs(sx - 1) > 0.01) {
+      sit.style.transition = "none";
+      sit.style.transformOrigin = "left top";
+      sit.style.transform = `translate(${dx}px, ${dy}px) scale(${sx}, 1)`;
+      sit.style.opacity = "0.6";
+      void sit.offsetWidth;
+      sit.style.transition = "transform .34s cubic-bezier(.3,1.15,.5,1), opacity .34s ease";
+      sit.style.transform = "";
+      sit.style.opacity = "";
+      const done = () => {
+        sit.style.transition = "";
+        sit.style.transformOrigin = "";
+        sit.removeEventListener("transitionend", done);
+      };
+      sit.addEventListener("transitionend", done);
+      window.setTimeout(done, 420);
+    }
+  }
+  syncPagerAfterAnimation();
+}
 function updateInlinePager() {
   const pager = document.getElementById("inline-pager");
   if (!pager) return;
@@ -571,6 +610,7 @@ function setupExpand() {
     btn.style.display = expanded ? "none" : "flex";
     document.body.classList.toggle("is-inline", !expanded);
     document.body.classList.toggle("is-expanded", expanded);
+    placeSituationStrip();
     scheduleInlinePagerSync();
     if (expanded && !modePoll) {
       modePoll = window.setInterval(sync, 400);
@@ -1228,12 +1268,44 @@ function isAirPlay(p) {
 function ytgToUnit(ytg, frameIsHome) {
   return frameIsHome ? 10 + ytg : 110 - ytg;
 }
+var TEXT_ABBR_ALIASES = {
+  LAR: ["LA", "LAR", "STL"],
+  LAC: ["LAC", "SD"],
+  LV: ["LV", "OAK", "LVR"],
+  WSH: ["WAS", "WSH"],
+  BAL: ["BLT", "BAL"],
+  CLE: ["CLV", "CLE"],
+  ARI: ["ARZ", "ARI"],
+  HOU: ["HST", "HOU"],
+  JAX: ["JAX", "JAC"],
+  NE: ["NE", "NWE"],
+  NO: ["NO", "NOR"],
+  TB: ["TB", "TAM"],
+  KC: ["KC", "KAN"],
+  GB: ["GB", "GNB"],
+  SF: ["SF", "SFO"]
+};
+function abbrMatchesTeam(abbr, teamAbbr) {
+  const a = abbr.toUpperCase(), t = teamAbbr.toUpperCase();
+  if (a === t) return true;
+  const aliases = TEXT_ABBR_ALIASES[t];
+  if (aliases && aliases.includes(a)) return true;
+  return (t.startsWith(a) || a.startsWith(t)) && a.length >= 2;
+}
 function spotToUnit(abbr, yard, g) {
-  if (abbr === g.away.abbr) return 10 + yard;
-  if (abbr === g.home.abbr) return 110 - yard;
+  const away = abbrMatchesTeam(abbr, g.away.abbr);
+  const home = abbrMatchesTeam(abbr, g.home.abbr);
+  if (away && !home) return 10 + yard;
+  if (home && !away) return 110 - yard;
+  if (away && home) {
+    const exA = g.away.abbr.toUpperCase() === abbr.toUpperCase() || (TEXT_ABBR_ALIASES[g.away.abbr.toUpperCase()] || []).includes(abbr.toUpperCase());
+    const exH = g.home.abbr.toUpperCase() === abbr.toUpperCase() || (TEXT_ABBR_ALIASES[g.home.abbr.toUpperCase()] || []).includes(abbr.toUpperCase());
+    if (exA && !exH) return 10 + yard;
+    if (exH && !exA) return 110 - yard;
+  }
   return null;
 }
-var SPOT_RE = /\b(?:at|to|from)\s+(?:([A-Z]{2,4})\s+)?(\d{1,2})\b/g;
+var SPOT_RE = /\b(?:at|to)\s+(?:the\s+)?(?:([A-Z]{2,4})\s+)?(\d{1,2})\b/g;
 function textSpots(text, g) {
   const out = [];
   SPOT_RE.lastIndex = 0;
@@ -1355,9 +1427,11 @@ function laneLine(u1, u2, lane2 = false) {
 }
 function arcPath(u1, u2, kick) {
   const a = xLane(u1), b = xLane(u2), y = FB.LANE;
-  const cy = FB.T + (kick ? 1 : 4);
-  const c1 = a + (b - a) * 0.2, c2 = a + (b - a) * 0.8;
-  return `M ${a.toFixed(1)} ${y} C ${c1.toFixed(1)} ${cy}, ${c2.toFixed(1)} ${cy}, ${b.toFixed(1)} ${y}`;
+  const len = Math.abs(b - a);
+  const rise = kick ? Math.min(62, Math.max(42, 36 + len * 0.09)) : Math.min(40, Math.max(22, 16 + len * 0.08));
+  const cy = y - rise / 0.75;
+  const c1 = a + (b - a) * 0.22, c2 = a + (b - a) * 0.78;
+  return `M ${a.toFixed(1)} ${y} C ${c1.toFixed(1)} ${cy.toFixed(1)}, ${c2.toFixed(1)} ${cy.toFixed(1)}, ${b.toFixed(1)} ${y}`;
 }
 function fgPath(u1, left) {
   const a = xLane(u1), y = FB.LANE;
@@ -1389,7 +1463,26 @@ function spotFromMatch(m, g) {
   return u == null ? null : clampUnit(u);
 }
 var FAIR_OR_TB = /fair catch|touchback/i;
-function decomposePlay(p, off, g) {
+function priorTextSpot(summary, play, g) {
+  const drives = summary?.drives;
+  const all = [...drives?.previous || []];
+  if (drives?.current) all.push(drives.current);
+  const flat = [];
+  for (const d of all) for (const p of d?.plays || []) flat.push(p);
+  const id = String(play?.id ?? "");
+  let idx = flat.findIndex((p) => String(p?.id ?? "") === id);
+  if (idx < 0) idx = flat.length;
+  for (let i = idx - 1, seen = 0; i >= 0 && seen < 8; i--) {
+    const p = flat[i];
+    if (isAdminPlay(p)) continue;
+    seen++;
+    if (String(p?.text || "").search(/PENALTY/i) >= 0) continue;
+    const spots = textSpots(String(p?.text || ""), g);
+    if (spots.length) return spots[spots.length - 1];
+  }
+  return null;
+}
+function decomposePlay(p, off, g, priorSpot = null) {
   const gm = playGeom(p, off.isHome, g.home.id, g.away.id, g);
   if (!gm) return null;
   const ink = gm.penalty ? "var(--penalty-yellow)" : "var(--play-ink)";
@@ -1412,9 +1505,9 @@ function decomposePlay(p, off, g) {
     const at = pick != null ? clampUnit(pick) : gm.x2;
     segs.push({ d: arcPath(gm.x1, at, false), len: segLen(gm.x1, at, true), kind: "arc", color: ink });
     const dir = off.isHome ? 1 : -1;
-    segs.push({ d: loopPath(at, dir), len: 18, kind: "loop", color: ink });
+    segs.push({ d: loopPath(at, dir), len: 18, kind: "loop", color: ink, lane2: true });
     if (Math.abs(gm.x2 - at) > 0.5) {
-      segs.push({ d: laneLine(at, gm.x2, true), len: segLen(at, gm.x2, false), kind: "return", color: ink });
+      segs.push({ d: laneLine(at, gm.x2, true), len: segLen(at, gm.x2, false), kind: "return", color: ink, lane2: true });
       badge = `${Math.round(Math.abs(gm.x2 - at))}-Yd Return`;
     }
   } else if (LOST_FUMBLE.test(tType)) {
@@ -1424,9 +1517,9 @@ function decomposePlay(p, off, g) {
       segs.push({ d: laneLine(gm.x1, fumbleAt, false), len: segLen(gm.x1, fumbleAt, false), kind: "ground", color: ink });
     }
     const dir = off.isHome ? 1 : -1;
-    segs.push({ d: loopPath(recovAt, dir), len: 18, kind: "loop", color: ink });
+    segs.push({ d: loopPath(recovAt, dir), len: 18, kind: "loop", color: ink, lane2: true });
     if (Math.abs(gm.x2 - recovAt) > 0.5) {
-      segs.push({ d: laneLine(recovAt, gm.x2, true), len: segLen(recovAt, gm.x2, false), kind: "return", color: ink });
+      segs.push({ d: laneLine(recovAt, gm.x2, true), len: segLen(recovAt, gm.x2, false), kind: "return", color: ink, lane2: true });
       badge = `${Math.round(Math.abs(gm.x2 - recovAt))}-Yd Return`;
     }
   } else if (kickish) {
@@ -1440,16 +1533,26 @@ function decomposePlay(p, off, g) {
     if (caught == null && !intoEz && Math.abs(gm.yards) > 0.5) {
       derived = clampUnit(gm.x2 + kickDir * Math.abs(gm.yards));
     }
-    const at = intoEz && caught == null ? ezLanding : caught != null ? clampUnit(caught) : derived != null ? derived : gm.x2;
+    const isTb = /touchback/i.test(text);
+    const at = isTb || intoEz && caught == null ? ezLanding : caught != null ? clampUnit(caught) : derived != null ? derived : gm.x2;
     segs.push({ d: arcPath(gm.x1, at, true), len: segLen(gm.x1, at, true), kind: "arc", color: ink });
     if (!FAIR_OR_TB.test(text) && Math.abs(gm.x2 - at) > 0.5) {
-      segs.push({ d: laneLine(at, gm.x2, true), len: segLen(at, gm.x2, false), kind: "return", color: ink });
+      segs.push({ d: laneLine(at, gm.x2, false), len: segLen(at, gm.x2, false), kind: "return", color: ink });
       badge = `${Math.round(Math.abs(gm.x2 - at))}-Yd Return`;
     }
   } else if (FG_PLAY.test(tType)) {
-    const left = off.isHome;
-    segs.push({ d: fgPath(gm.x1, left), len: segLen(gm.x1, left ? 0 : 120, true) + 14, kind: "arc", color: ink });
-    endUnit = gm.x1;
+    let x1 = gm.x1;
+    let left = off.isHome;
+    if (priorSpot != null) {
+      const attackingRight = priorSpot > 60;
+      const dm = text.match(/(\d{1,2})\s*(?:yard|yd)\s*field goal/i);
+      const isPat = /extra point/i.test(tType) || /extra point/i.test(text);
+      const ytgLos = isPat ? 15 : dm ? Math.max(1, Number(dm[1]) - 18) : null;
+      x1 = ytgLos != null ? clampUnit(attackingRight ? 110 - ytgLos : 10 + ytgLos) : clampUnit(priorSpot);
+      left = !attackingRight;
+    }
+    segs.push({ d: fgPath(x1, left), len: segLen(x1, left ? 0 : 120, true) + 14, kind: "arc", color: ink });
+    endUnit = x1;
   } else if (gm.air) {
     segs.push({ d: arcPath(gm.x1, gm.x2, false), len: segLen(gm.x1, gm.x2, true), kind: "arc", color: ink });
   } else if (Math.abs(gm.x2 - gm.x1) > 0.5) {
@@ -1460,7 +1563,7 @@ function decomposePlay(p, off, g) {
   }
   return { segs, xMark, badge, endUnit };
 }
-var durOf = (len) => Math.max(820, Math.min(2400, len * 8));
+var durOf = (len) => Math.max(1e3, Math.min(3e3, len * 10));
 function ballShape() {
   return `<ellipse rx="5.9" ry="3.8" fill="#141414" stroke="#000" stroke-width="0.8"/><line x1="-2.4" y1="0" x2="2.4" y2="0" stroke="#f4f0e8" stroke-width="0.85"/>`;
 }
@@ -1511,7 +1614,8 @@ function renderFieldViz(summary, g, sit) {
     const offenseId = kick ? st === g.home.id ? g.away.id : g.home.id : st;
     return offenseId === g.home.id ? { team: g.home, isHome: true } : { team: g.away, isHome: false };
   })();
-  const viz = lastReal ? decomposePlay(lastReal, playOff, g) : null;
+  const priorSpot = lastReal ? priorTextSpot(summary, lastReal, g) : null;
+  const viz = lastReal ? decomposePlay(lastReal, playOff, g, priorSpot) : null;
   let spot = viz ? viz.endUnit : null;
   if (spot == null && last) {
     const e = numOrNull(last?.end?.yardsToEndzone);
@@ -1541,15 +1645,15 @@ function renderFieldViz(summary, g, sit) {
   let out = "";
   if (viz && viz.segs.length) {
     if (isNewPlay) {
-      let begin = 170;
+      let begin = 200;
       const mid = "fvm" + Date.now();
       let defs = "";
       viz.segs.forEach((seg, i) => {
         const dur = durOf(seg.len);
         defs += `<mask id="${mid}-${i}" maskUnits="userSpaceOnUse"><path d="${seg.d}" fill="none" stroke="#fff" stroke-width="10" stroke-linecap="round" pathLength="100" stroke-dasharray="100" stroke-dashoffset="100"><animate attributeName="stroke-dashoffset" from="100" to="0" dur="${dur}ms" begin="${begin}ms" fill="freeze" calcMode="spline" keyTimes="0;1" keySplines="0.22 0.06 0.2 1"/></path></mask>`;
         out += `<path d="${seg.d}" fill="none" stroke="${seg.color}" stroke-width="2.4" stroke-linecap="round" stroke-dasharray="6 5" mask="url(#${mid}-${i})"/>`;
-        out += `<g opacity="1"><animate attributeName="opacity" from="1" to="0" begin="${begin + dur + 300}ms" dur="440ms" fill="freeze"/><g>${ballShape()}<animateMotion path="${seg.d}" begin="${begin}ms" dur="${dur}ms" fill="freeze" rotate="${seg.kind === "arc" ? "auto" : "0"}" calcMode="spline" keyTimes="0;1" keySplines="0.22 0.06 0.2 1"/></g></g>`;
-        begin += dur + 190;
+        out += `<g opacity="1"><animate attributeName="opacity" from="1" to="0" begin="${begin + dur + 360}ms" dur="520ms" fill="freeze"/><g opacity="0"><animate attributeName="opacity" from="0" to="1" begin="${begin}ms" dur="1ms" fill="freeze"/>${ballShape()}<animateMotion path="${seg.d}" begin="${begin}ms" dur="${dur}ms" fill="freeze" rotate="${seg.kind === "arc" ? "auto" : "0"}" calcMode="spline" keyTimes="0;1" keySplines="0.22 0.06 0.2 1"/></g></g>`;
+        begin += dur + 230;
       });
       chainMs = begin;
       if (viz.xMark != null) {
@@ -1584,8 +1688,11 @@ function renderFieldViz(summary, g, sit) {
   }
   if (spot != null) {
     const d = owner.isHome ? -1 : 1;
-    const hx = xLane(clampUnit(spot + d * 1.2));
-    const arrow = `<path class="fv-arrow" d="M ${hx.toFixed(1)} ${FB.LANE - 5.5} L ${(hx + d * 10).toFixed(1)} ${FB.LANE} L ${hx.toFixed(1)} ${FB.LANE + 5.5} Z"/>`;
+    const lastSeg = viz?.segs.length ? viz.segs[viz.segs.length - 1] : null;
+    const onLane2 = !!lastSeg?.lane2;
+    const ay = onLane2 ? FB.LANE2 : FB.LANE;
+    const hx = (onLane2 ? xLane2 : xLane)(clampUnit(spot));
+    const arrow = `<path class="fv-arrow" d="M ${hx.toFixed(1)} ${ay - 5.5} L ${(hx + d * 10).toFixed(1)} ${ay} L ${hx.toFixed(1)} ${ay + 5.5} Z"/>`;
     out += isNewPlay ? `<g opacity="0"><animate attributeName="opacity" from="0" to="1" begin="${Math.max(0, chainMs - 80)}ms" dur="340ms" fill="freeze"/>${arrow}</g>` : arrow;
   }
   playG.innerHTML = out;
@@ -1609,8 +1716,11 @@ function renderFieldViz(summary, g, sit) {
   } else pinG.style.display = "none";
   if (viz?.badge && spot != null) {
     const bx = xLane(spot);
-    const w = Math.max(46, viz.badge.length * 6.4 + 14);
-    chipG.innerHTML = `<rect class="fv-chipbg${lastReal?.isPenalty ? " pen" : ""}" x="${(bx - w / 2).toFixed(1)}" y="${(FB.LANE2 + 5).toFixed(1)}" rx="4" width="${w.toFixed(1)}" height="13"/><text class="fv-chiptext${lastReal?.isPenalty ? " pen" : ""}" x="${bx.toFixed(1)}" y="${(FB.LANE2 + 14.3).toFixed(1)}" text-anchor="middle">${escapeHtml(viz.badge)}</text>`;
+    const lastSegB = viz.segs.length ? viz.segs[viz.segs.length - 1] : null;
+    const CH = 16;
+    const top = lastSegB?.lane2 ? FB.LANE2 + 6 : FB.LANE + 9;
+    const w = Math.max(54, viz.badge.length * 7.3 + 16);
+    chipG.innerHTML = `<rect class="fv-chipbg${lastReal?.isPenalty ? " pen" : ""}" x="${(bx - w / 2).toFixed(1)}" y="${top.toFixed(1)}" rx="5" width="${w.toFixed(1)}" height="${CH}"/><text class="fv-chiptext${lastReal?.isPenalty ? " pen" : ""}" x="${bx.toFixed(1)}" y="${(top + 11.6).toFixed(1)}" text-anchor="middle">${escapeHtml(viz.badge)}</text>`;
     chipG.style.display = "";
     if (isNewPlay) {
       chipG.classList.remove("anim-in");
@@ -2900,6 +3010,7 @@ function render(summary) {
     if (sitEl) {
       const show = !!(sit && sit.ddText);
       sitEl.style.display = show ? "" : "none";
+      if (show && sitPlacement === null) placeSituationStrip();
       if (show) {
         const dd = $("sit-dd"), spot = $("sit-spot");
         if (dd) dd.textContent = sit.ddText;

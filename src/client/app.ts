@@ -203,6 +203,52 @@ function syncPagerAfterAnimation(): void {
   [80, 180, 280, 420].forEach((ms) => window.setTimeout(scheduleInlinePagerSync, ms));
 }
 
+// The DOWN | BALL ON strip has two homes: inside the drive header's dead
+// space in inline mode (Joe: kill dead space; the spot is already shown
+// under the status block), and its own row above the field in expanded.
+// One element, moved between parents with a FLIP animation — measure
+// where it was, move it, measure where it is, then transition the
+// difference away so it visibly slides rather than teleporting.
+let sitPlacement: "hdr" | "row" | null = null;
+
+function placeSituationStrip(): void {
+  const sit = $("situation");
+  const slot = $("dh-sit-slot");
+  const fieldwrap = document.querySelector<HTMLElement>("#live-content .fieldwrap");
+  if (!sit || !slot || !fieldwrap?.parentNode) return;
+  const want: "hdr" | "row" = document.body.classList.contains("is-inline") ? "hdr" : "row";
+  if (want === sitPlacement) return;
+
+  const visible = sit.style.display !== "none" && sit.offsetParent !== null;
+  const first = visible ? sit.getBoundingClientRect() : null;
+
+  if (want === "hdr") slot.appendChild(sit);
+  else fieldwrap.parentNode.insertBefore(sit, fieldwrap);
+  sit.classList.toggle("in-hdr", want === "hdr");
+  sitPlacement = want;
+
+  const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+  if (first && !reduce) {
+    const last = sit.getBoundingClientRect();
+    const dx = first.left - last.left, dy = first.top - last.top;
+    const sx = last.width ? first.width / last.width : 1;
+    if (Math.abs(dx) > 0.5 || Math.abs(dy) > 0.5 || Math.abs(sx - 1) > 0.01) {
+      sit.style.transition = "none";
+      sit.style.transformOrigin = "left top";
+      sit.style.transform = `translate(${dx}px, ${dy}px) scale(${sx}, 1)`;
+      sit.style.opacity = "0.6";
+      void sit.offsetWidth; // commit the inverted state
+      sit.style.transition = "transform .34s cubic-bezier(.3,1.15,.5,1), opacity .34s ease";
+      sit.style.transform = "";
+      sit.style.opacity = "";
+      const done = (): void => { sit.style.transition = ""; sit.style.transformOrigin = ""; sit.removeEventListener("transitionend", done); };
+      sit.addEventListener("transitionend", done);
+      window.setTimeout(done, 420); // safety if transitionend never fires
+    }
+  }
+  syncPagerAfterAnimation();
+}
+
 function updateInlinePager(): void {
   const pager = document.getElementById("inline-pager");
   if (!pager) return;
@@ -290,6 +336,7 @@ function setupExpand(): void {
     btn.style.display = expanded ? "none" : "flex";
     document.body.classList.toggle("is-inline", !expanded);
     document.body.classList.toggle("is-expanded", expanded);
+    placeSituationStrip();
     scheduleInlinePagerSync();
     if (expanded && !modePoll) {
       modePoll = window.setInterval(sync, 400);
@@ -1003,9 +1050,52 @@ function ytgToUnit(ytg: number, frameIsHome: boolean): number {
   return frameIsHome ? 10 + ytg : 110 - ytg;
 }
 // "DET 28" -> field unit (away defends the LEFT end zone, goal line u=10)
+// Play-by-play TEXT uses the NFL's own (GSIS) team codes, which differ from
+// ESPN's team.abbreviation for several clubs — "to LA 2" is the Rams (ESPN:
+// LAR). Seen live Sep 1: an unrecognised "LA" made the catch spot null and
+// the only recognised spot ("from LAC 35", the kick ORIGIN) became the
+// ending spot, launching the kickoff arc from midfield. Every known
+// divergence is listed; a prefix check catches any unlisted one.
+const TEXT_ABBR_ALIASES: Record<string, string[]> = {
+  LAR: ["LA", "LAR", "STL"],
+  LAC: ["LAC", "SD"],
+  LV:  ["LV", "OAK", "LVR"],
+  WSH: ["WAS", "WSH"],
+  BAL: ["BLT", "BAL"],
+  CLE: ["CLV", "CLE"],
+  ARI: ["ARZ", "ARI"],
+  HOU: ["HST", "HOU"],
+  JAX: ["JAX", "JAC"],
+  NE:  ["NE", "NWE"],
+  NO:  ["NO", "NOR"],
+  TB:  ["TB", "TAM"],
+  KC:  ["KC", "KAN"],
+  GB:  ["GB", "GNB"],
+  SF:  ["SF", "SFO"],
+};
+
+function abbrMatchesTeam(abbr: string, teamAbbr: string): boolean {
+  const a = abbr.toUpperCase(), t = teamAbbr.toUpperCase();
+  if (a === t) return true;
+  const aliases = TEXT_ABBR_ALIASES[t];
+  if (aliases && aliases.includes(a)) return true;
+  // Unlisted variant: accept a strict prefix either way ("LA" ⊂ "LAR"),
+  // but only when it can't also be read as the OTHER team.
+  return (t.startsWith(a) || a.startsWith(t)) && a.length >= 2;
+}
+
 function spotToUnit(abbr: string, yard: number, g: NormGame): number | null {
-  if (abbr === g.away.abbr) return 10 + yard;
-  if (abbr === g.home.abbr) return 110 - yard;
+  const away = abbrMatchesTeam(abbr, g.away.abbr);
+  const home = abbrMatchesTeam(abbr, g.home.abbr);
+  if (away && !home) return 10 + yard;
+  if (home && !away) return 110 - yard;
+  if (away && home) {
+    // ambiguous prefix (e.g. "LA" when LAR plays LAC): exact/alias wins
+    const exA = g.away.abbr.toUpperCase() === abbr.toUpperCase() || (TEXT_ABBR_ALIASES[g.away.abbr.toUpperCase()] || []).includes(abbr.toUpperCase());
+    const exH = g.home.abbr.toUpperCase() === abbr.toUpperCase() || (TEXT_ABBR_ALIASES[g.home.abbr.toUpperCase()] || []).includes(abbr.toUpperCase());
+    if (exA && !exH) return 10 + yard;
+    if (exH && !exA) return 110 - yard;
+  }
   return null;
 }
 
@@ -1017,7 +1107,9 @@ function spotToUnit(abbr: string, yard: number, g: NormGame): number | null {
 // it exists; ytg stays the fallback for touchbacks and spotless texts.
 // Team abbr is OPTIONAL because midfield is written bare ("recovered by
 // DET-R.Blackshear at 50."). A bare number is only unambiguous at the 50.
-const SPOT_RE = /\b(?:at|to|from)\s+(?:([A-Z]{2,4})\s+)?(\d{1,2})\b/g;
+// "from X" is an ORIGIN (kick/punt launch point) — it must never be read as
+// where the ball ended, so it's excluded here. Only at/to spots count.
+const SPOT_RE = /\b(?:at|to)\s+(?:the\s+)?(?:([A-Z]{2,4})\s+)?(\d{1,2})\b/g;
 
 function textSpots(text: string, g: NormGame): number[] {
   const out: number[] = [];
@@ -1190,6 +1282,7 @@ interface Seg {
   len: number;         // approx px length (drives duration + mask dash)
   kind: "arc" | "ground" | "loop" | "return";
   color: string;
+  lane2?: boolean;     // segment ends on the LOWER lane (post-turnover returns)
 }
 interface PlayViz { segs: Seg[]; xMark: number | null; badge: string | null; endUnit: number; }
 
@@ -1200,9 +1293,18 @@ function laneLine(u1: number, u2: number, lane2 = false): string {
 }
 function arcPath(u1: number, u2: number, kick: boolean): string {
   const a = xLane(u1), b = xLane(u2), y = FB.LANE;
-  const cy = FB.T + (kick ? 1 : 4);
-  const c1 = a + (b - a) * 0.2, c2 = a + (b - a) * 0.8;
-  return `M ${a.toFixed(1)} ${y} C ${c1.toFixed(1)} ${cy}, ${c2.toFixed(1)} ${cy}, ${b.toFixed(1)} ${y}`;
+  // A cubic with both controls at cy peaks at only 75% of the way there, so
+  // the old cy=T+1 topped out ~25px above the lane — "very low" (Joe).
+  // Aim for a real PEAK instead, scaled by distance: a 63-yd kickoff sails
+  // up near the viewBox top (-16), a short punt noticeably lower, passes
+  // stay below the far sideline so they read as throws, not kicks.
+  const len = Math.abs(b - a);
+  const rise = kick
+    ? Math.min(62, Math.max(42, 36 + len * 0.09))   // peak ≈ -7 … 13
+    : Math.min(40, Math.max(22, 16 + len * 0.08));   // peak ≈ 15 … 33
+  const cy = y - rise / 0.75;
+  const c1 = a + (b - a) * 0.22, c2 = a + (b - a) * 0.78;
+  return `M ${a.toFixed(1)} ${y} C ${c1.toFixed(1)} ${cy.toFixed(1)}, ${c2.toFixed(1)} ${cy.toFixed(1)}, ${b.toFixed(1)} ${y}`;
 }
 // Field goals / PATs fly THROUGH the uprights (Joe): the path ends inside
 // the prong gap (posts sit at screen x≈12 left / x≈588 right, prongs span
@@ -1250,7 +1352,31 @@ const FAIR_OR_TB = /fair catch|touchback/i;
 
 // Decompose the last play into performable segments (frame-aware,
 // text-assisted for kicks/punts/INTs).
-function decomposePlay(p: any, off: { team: NormTeam; isHome: boolean }, g: NormGame): PlayViz | null {
+// The last text-named spot before `play`, looking back through the drive
+// (and into the previous drive if needed). Frame-free by construction —
+// it's the same textSpots() the ending-spot logic trusts. Used to anchor
+// plays whose OWN text names no spot, e.g. "27 yard field goal is GOOD".
+function priorTextSpot(summary: any, play: any, g: NormGame): number | null {
+  const drives = summary?.drives;
+  const all: any[] = [...(drives?.previous || [])];
+  if (drives?.current) all.push(drives.current);
+  const flat: any[] = [];
+  for (const d of all) for (const p of d?.plays || []) flat.push(p);
+  const id = String(play?.id ?? "");
+  let idx = flat.findIndex((p) => String(p?.id ?? "") === id);
+  if (idx < 0) idx = flat.length; // not found → scan from the end
+  for (let i = idx - 1, seen = 0; i >= 0 && seen < 8; i--) {
+    const p = flat[i];
+    if (isAdminPlay(p)) continue;
+    seen++;
+    if (String(p?.text || "").search(/PENALTY/i) >= 0) continue; // enforcement spots aren't final
+    const spots = textSpots(String(p?.text || ""), g);
+    if (spots.length) return spots[spots.length - 1]!;
+  }
+  return null;
+}
+
+function decomposePlay(p: any, off: { team: NormTeam; isHome: boolean }, g: NormGame, priorSpot: number | null = null): PlayViz | null {
   const gm = playGeom(p, off.isHome, g.home.id, g.away.id, g);
   if (!gm) return null;
   const ink = gm.penalty ? "var(--penalty-yellow)" : "var(--play-ink)";
@@ -1276,9 +1402,9 @@ function decomposePlay(p: any, off: { team: NormTeam; isHome: boolean }, g: Norm
     const at = pick != null ? clampUnit(pick) : gm.x2;
     segs.push({ d: arcPath(gm.x1, at, false), len: segLen(gm.x1, at, true), kind: "arc", color: ink });
     const dir = off.isHome ? 1 : -1; // the RETURNER's direction — opposite the offense
-    segs.push({ d: loopPath(at, dir), len: 18, kind: "loop", color: ink });
+    segs.push({ d: loopPath(at, dir), len: 18, kind: "loop", color: ink, lane2: true });
     if (Math.abs(gm.x2 - at) > 0.5) {
-      segs.push({ d: laneLine(at, gm.x2, true), len: segLen(at, gm.x2, false), kind: "return", color: ink });
+      segs.push({ d: laneLine(at, gm.x2, true), len: segLen(at, gm.x2, false), kind: "return", color: ink, lane2: true });
       badge = `${Math.round(Math.abs(gm.x2 - at))}-Yd Return`;
     }
   } else if (LOST_FUMBLE.test(tType)) {
@@ -1290,9 +1416,9 @@ function decomposePlay(p: any, off: { team: NormTeam; isHome: boolean }, g: Norm
       segs.push({ d: laneLine(gm.x1, fumbleAt, false), len: segLen(gm.x1, fumbleAt, false), kind: "ground", color: ink });
     }
     const dir = off.isHome ? 1 : -1; // the RECOVERING team's direction
-    segs.push({ d: loopPath(recovAt, dir), len: 18, kind: "loop", color: ink });
+    segs.push({ d: loopPath(recovAt, dir), len: 18, kind: "loop", color: ink, lane2: true });
     if (Math.abs(gm.x2 - recovAt) > 0.5) {
-      segs.push({ d: laneLine(recovAt, gm.x2, true), len: segLen(recovAt, gm.x2, false), kind: "return", color: ink });
+      segs.push({ d: laneLine(recovAt, gm.x2, true), len: segLen(recovAt, gm.x2, false), kind: "return", color: ink, lane2: true });
       badge = `${Math.round(Math.abs(gm.x2 - recovAt))}-Yd Return`;
     }
   } else if (kickish) {
@@ -1317,7 +1443,14 @@ function decomposePlay(p: any, off: { team: NormTeam; isHome: boolean }, g: Norm
     if (caught == null && !intoEz && Math.abs(gm.yards) > 0.5) {
       derived = clampUnit(gm.x2 + kickDir * Math.abs(gm.yards));
     }
-    const at = intoEz && caught == null ? ezLanding
+    // "Touchback to the LAC 35" writes the PLACEMENT inside the kick
+    // sentence, so CATCH_RE happily reads it as a catch spot — and the arc
+    // dropped at the 35 (Joe). A touchback means the ball landed in the
+    // end zone, full stop: it VETOES any parsed catch spot. "to the end
+    // zone" without "touchback" (fielded in the zone, run out) still lands
+    // in the zone and draws its return to the text-derived end spot.
+    const isTb = /touchback/i.test(text);
+    const at = isTb || (intoEz && caught == null) ? ezLanding
       : caught != null ? clampUnit(caught)
       : derived != null ? derived : gm.x2;
     segs.push({ d: arcPath(gm.x1, at, true), len: segLen(gm.x1, at, true), kind: "arc", color: ink });
@@ -1325,14 +1458,35 @@ function decomposePlay(p: any, off: { team: NormTeam; isHome: boolean }, g: Norm
     // the text (touchback/fair catch suppress it). A kick fielded IN the
     // zone and run out gets its return drawn from the zone — correct.
     if (!FAIR_OR_TB.test(text) && Math.abs(gm.x2 - at) > 0.5) {
-      segs.push({ d: laneLine(at, gm.x2, true), len: segLen(at, gm.x2, false), kind: "return", color: ink });
+      // Middle lane: the kick arc is in the air, so the return can run on
+      // the main line and the direction arrow connects to it (Joe).
+      segs.push({ d: laneLine(at, gm.x2, false), len: segLen(at, gm.x2, false), kind: "return", color: ink });
       badge = `${Math.round(Math.abs(gm.x2 - at))}-Yd Return`;
     }
   } else if (FG_PLAY.test(tType)) {
-    // Kick sails THROUGH the uprights behind the attacked end zone.
-    const left = off.isHome;
-    segs.push({ d: fgPath(gm.x1, left), len: segLen(gm.x1, left ? 0 : 120, true) + 14, kind: "arc", color: ink });
-    endUnit = gm.x1;
+    // A field goal's text names NO spot ("27 yard field goal is GOOD"), so
+    // this was the last play type with nothing frame-free to stand on — and
+    // a mirrored start.ytg drew a 90-yard kick from the wrong side (Joe,
+    // LAR@LAC play 14). ANCHOR ON THE DRIVE instead: the plays before it
+    // name spots, and a FG is always kicked from where the drive just was.
+    // Side = the half the drive was in; LOS = kick distance − 18 (10 yards
+    // of end zone + 8-yard hold — verified against ESPN's own start.ytg on
+    // 5/5 fixture kicks, all exactly 18) in that half's frame. PATs snap
+    // from the 15. Frame math is only the fallback with no prior spot.
+    let x1 = gm.x1;
+    let left = off.isHome;
+    if (priorSpot != null) {
+      const attackingRight = priorSpot > 60;       // drive was in the right half → kicking at the right posts
+      const dm = text.match(/(\d{1,2})\s*(?:yard|yd)\s*field goal/i);
+      const isPat = /extra point/i.test(tType) || /extra point/i.test(text);
+      const ytgLos = isPat ? 15 : dm ? Math.max(1, Number(dm[1]) - 18) : null;
+      x1 = ytgLos != null
+        ? clampUnit(attackingRight ? 110 - ytgLos : 10 + ytgLos)
+        : clampUnit(priorSpot);
+      left = !attackingRight;
+    }
+    segs.push({ d: fgPath(x1, left), len: segLen(x1, left ? 0 : 120, true) + 14, kind: "arc", color: ink });
+    endUnit = x1;
   } else if (gm.air) {
     segs.push({ d: arcPath(gm.x1, gm.x2, false), len: segLen(gm.x1, gm.x2, true), kind: "arc", color: ink });
   } else if (Math.abs(gm.x2 - gm.x1) > 0.5) {
@@ -1353,7 +1507,9 @@ function decomposePlay(p: any, off: { team: NormTeam; isHome: boolean }, g: Norm
 // Pacing: football is a slow game and the play should FLOAT (Joe). Nudged up
 // ~15% from 7x/700-2100 — enough to feel unhurried, not enough to lag the
 // 10s poll cadence (worst case ~2.4s + gaps still lands well inside it).
-const durOf = (len: number): number => Math.max(820, Math.min(2400, len * 8));
+// Round 2 of "make it float" (Joe): another ~25% slower. Worst case (INT
+// arc + loop + return) is ~5.2s against the 10s live poll — still safe.
+const durOf = (len: number): number => Math.max(1000, Math.min(3000, len * 10));
 
 function ballShape(): string {
   // Black ball, a touch larger (Joe) — the brown read as mud at phone size.
@@ -1440,7 +1596,8 @@ function renderFieldViz(summary: any, g: NormGame, sit: Situation | null): void 
       : { team: g.away, isHome: false };
   })();
 
-  const viz = lastReal ? decomposePlay(lastReal, playOff, g) : null;
+  const priorSpot = lastReal ? priorTextSpot(summary, lastReal, g) : null;
+  const viz = lastReal ? decomposePlay(lastReal, playOff, g, priorSpot) : null;
 
   // spot
   let spot: number | null = viz ? viz.endUnit : null;
@@ -1478,7 +1635,7 @@ function renderFieldViz(summary: any, g: NormGame, sit: Situation | null): void 
   let out = "";
   if (viz && viz.segs.length) {
     if (isNewPlay) {
-      let begin = 170;
+      let begin = 200;
       const mid = "fvm" + Date.now();
       let defs = "";
       viz.segs.forEach((seg, i) => {
@@ -1492,9 +1649,10 @@ function renderFieldViz(summary: any, g: NormGame, sit: Situation | null): void 
         out += `<path d="${seg.d}" fill="none" stroke="${seg.color}" stroke-width="2.4"` +
           ` stroke-linecap="round" stroke-dasharray="6 5" mask="url(#${mid}-${i})"/>`;
         // ball rides every segment
-        out += `<g opacity="1"><animate attributeName="opacity" from="1" to="0" begin="${begin + dur + 300}ms" dur="440ms" fill="freeze"/>` +
-          `<g>${ballShape()}<animateMotion path="${seg.d}" begin="${begin}ms" dur="${dur}ms" fill="freeze" rotate="${seg.kind === "arc" ? "auto" : "0"}" calcMode="spline" keyTimes="0;1" keySplines="0.22 0.06 0.2 1"/></g></g>`;
-        begin += dur + 190; // a touch more air between segments
+        out += `<g opacity="1"><animate attributeName="opacity" from="1" to="0" begin="${begin + dur + 360}ms" dur="520ms" fill="freeze"/>` +
+          `<g opacity="0"><animate attributeName="opacity" from="0" to="1" begin="${begin}ms" dur="1ms" fill="freeze"/>` +
+          `${ballShape()}<animateMotion path="${seg.d}" begin="${begin}ms" dur="${dur}ms" fill="freeze" rotate="${seg.kind === "arc" ? "auto" : "0"}" calcMode="spline" keyTimes="0;1" keySplines="0.22 0.06 0.2 1"/></g></g>`;
+        begin += dur + 230; // air between segments
       });
       chainMs = begin;
       if (viz.xMark != null) {
@@ -1537,8 +1695,14 @@ function renderFieldViz(summary: any, g: NormGame, sit: Situation | null): void 
   }
   if (spot != null) {
     const d = owner.isHome ? -1 : 1;
-    const hx = xLane(clampUnit(spot + d * 1.2));
-    const arrow = `<path class="fv-arrow" d="M ${hx.toFixed(1)} ${FB.LANE - 5.5} L ${(hx + d * 10).toFixed(1)} ${FB.LANE} L ${hx.toFixed(1)} ${FB.LANE + 5.5} Z"/>`;
+    // Attach to the lane the play actually ended on (post-turnover returns
+    // run on the lower lane), with the arrow's BASE flush against the end
+    // of the line so line and arrow read as one stroke (Joe: details).
+    const lastSeg = viz?.segs.length ? viz.segs[viz.segs.length - 1] : null;
+    const onLane2 = !!lastSeg?.lane2;
+    const ay = onLane2 ? FB.LANE2 : FB.LANE;
+    const hx = (onLane2 ? xLane2 : xLane)(clampUnit(spot));
+    const arrow = `<path class="fv-arrow" d="M ${hx.toFixed(1)} ${ay - 5.5} L ${(hx + d * 10).toFixed(1)} ${ay} L ${hx.toFixed(1)} ${ay + 5.5} Z"/>`;
     out += isNewPlay
       ? `<g opacity="0"><animate attributeName="opacity" from="0" to="1" begin="${Math.max(0, chainMs - 80)}ms" dur="340ms" fill="freeze"/>${arrow}</g>`
       : arrow;
@@ -1568,9 +1732,16 @@ function renderFieldViz(summary: any, g: NormGame, sit: Situation | null): void 
   // yardage / return badge below the side strip
   if (viz?.badge && spot != null) {
     const bx = xLane(spot);
-    const w = Math.max(46, viz.badge.length * 6.4 + 14);
-    chipG.innerHTML = `<rect class="fv-chipbg${lastReal?.isPenalty ? " pen" : ""}" x="${(bx - w / 2).toFixed(1)}" y="${(FB.LANE2 + 5).toFixed(1)}" rx="4" width="${w.toFixed(1)}" height="13"/>` +
-      `<text class="fv-chiptext${lastReal?.isPenalty ? " pen" : ""}" x="${bx.toFixed(1)}" y="${(FB.LANE2 + 14.3).toFixed(1)}" text-anchor="middle">${escapeHtml(viz.badge)}</text>`;
+    // Bigger badge (Joe: "very small"). With kick returns on the middle
+    // lane there's room below it; turnover returns end on the lower lane,
+    // so the badge drops just beneath that instead. Arrow spans ±5.5
+    // around its lane — both placements clear it.
+    const lastSegB = viz.segs.length ? viz.segs[viz.segs.length - 1] : null;
+    const CH = 16;
+    const top = lastSegB?.lane2 ? FB.LANE2 + 6 : FB.LANE + 9;
+    const w = Math.max(54, viz.badge.length * 7.3 + 16);
+    chipG.innerHTML = `<rect class="fv-chipbg${lastReal?.isPenalty ? " pen" : ""}" x="${(bx - w / 2).toFixed(1)}" y="${top.toFixed(1)}" rx="5" width="${w.toFixed(1)}" height="${CH}"/>` +
+      `<text class="fv-chiptext${lastReal?.isPenalty ? " pen" : ""}" x="${bx.toFixed(1)}" y="${(top + 11.6).toFixed(1)}" text-anchor="middle">${escapeHtml(viz.badge)}</text>`;
     chipG.style.display = "";
     if (isNewPlay) {
       chipG.classList.remove("anim-in");
@@ -3109,6 +3280,7 @@ function render(summary: any): void {
     if (sitEl) {
       const show = !!(sit && sit.ddText);
       sitEl.style.display = show ? "" : "none";
+      if (show && sitPlacement === null) placeSituationStrip();
       if (show) {
         const dd = $("sit-dd"), spot = $("sit-spot");
         if (dd) dd.textContent = sit!.ddText;
