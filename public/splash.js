@@ -1483,11 +1483,31 @@ function priorTextSpot(summary, play, g) {
   return null;
 }
 function decomposePlay(p, off, g, priorSpot = null) {
-  const gm = playGeom(p, off.isHome, g.home.id, g.away.id, g);
+  let gm = playGeom(p, off.isHome, g.home.id, g.away.id, g);
   if (!gm) return null;
   const ink = gm.penalty ? "var(--penalty-yellow)" : "var(--play-ink)";
+  const preferNearPrior = (u) => {
+    if (priorSpot == null) return u;
+    const alt = clampUnit(120 - u);
+    return Math.abs(alt - priorSpot) + 6 < Math.abs(u - priorSpot) ? alt : u;
+  };
   const text = String(p?.text || "");
   const tType = playTypeText(p);
+  {
+    const noTextSpots = !gm.penalty && textSpots(text, g).length === 0;
+    if (noTextSpots && !CHANGE_POSS.test(tType) && !FG_PLAY.test(tType)) {
+      const nx1 = preferNearPrior(gm.x1);
+      if (nx1 !== gm.x1) gm = { ...gm, x1: nx1, x2: clampUnit(120 - gm.x2) };
+    }
+  }
+  if (/TOUCHDOWN/i.test(text) && p?.scoringPlay === true && !gm.penalty && !CHANGE_POSS.test(tType) && !FG_PLAY.test(tType)) {
+    const yd = Math.abs(Number(p?.statYardage) || 0);
+    const nearGoal = (u) => Math.abs(u - 110) <= 2 ? 110 : Math.abs(u - 10) <= 2 ? 10 : null;
+    const gA = nearGoal(clampUnit(gm.x1 + yd));
+    const gB = nearGoal(clampUnit(gm.x1 - yd));
+    const goal = gA != null && gB == null ? gA : gB != null && gA == null ? gB : gm.x1 > 60 ? 110 : 10;
+    gm = { ...gm, x2: goal };
+  }
   const segs = [];
   let xMark = null;
   let badge = null;
@@ -1511,10 +1531,11 @@ function decomposePlay(p, off, g, priorSpot = null) {
       badge = `${Math.round(Math.abs(gm.x2 - at))}-Yd Return`;
     }
   } else if (LOST_FUMBLE.test(tType)) {
-    const fumbleAt = spotFromMatch(text.match(FUMBLE_AT_RE), g) ?? gm.x1;
+    const fx1 = preferNearPrior(gm.x1);
+    const fumbleAt = spotFromMatch(text.match(FUMBLE_AT_RE), g) ?? fx1;
     const recovAt = spotFromMatch(text.match(RECOVERED_AT_RE), g) ?? gm.x2;
-    if (Math.abs(fumbleAt - gm.x1) > 0.5) {
-      segs.push({ d: laneLine(gm.x1, fumbleAt, false), len: segLen(gm.x1, fumbleAt, false), kind: "ground", color: ink });
+    if (Math.abs(fumbleAt - fx1) > 0.5) {
+      segs.push({ d: laneLine(fx1, fumbleAt, false), len: segLen(fx1, fumbleAt, false), kind: "ground", color: ink });
     }
     const dir = off.isHome ? 1 : -1;
     segs.push({ d: loopPath(recovAt, dir), len: 18, kind: "loop", color: ink, lane2: true });
@@ -1525,6 +1546,23 @@ function decomposePlay(p, off, g, priorSpot = null) {
   } else if (kickish) {
     const m = text.match(CATCH_RE);
     const caught = m ? spotToUnit(m[1], Number(m[2]), g) : null;
+    let kx1 = gm.x1;
+    const fromM = text.match(/\bfrom\s+(?:the\s+)?([A-Z]{2,4})\s+(\d{1,2})/i);
+    const fromU = fromM ? spotToUnit(String(fromM[1]).toUpperCase(), Number(fromM[2]), g) : null;
+    if (fromU != null) {
+      kx1 = clampUnit(fromU);
+    } else {
+      const dm = text.match(/(?:punts?|kicks?)\s+(\d{1,3})\s+yards?/i);
+      const dist = dm ? Number(dm[1]) : null;
+      if (dist != null && caught != null) {
+        const alt = clampUnit(120 - gm.x1);
+        const eA = Math.abs(Math.abs(gm.x1 - clampUnit(caught)) - dist);
+        const eB = Math.abs(Math.abs(alt - clampUnit(caught)) - dist);
+        if (eB + 1 < eA) kx1 = alt;
+      } else {
+        kx1 = preferNearPrior(gm.x1);
+      }
+    }
     const intoEz = /touchback|to (?:the )?end zone/i.test(text);
     const isKickoffPlay = KICKOFF_PLAY.test(tType);
     const kickDir = isKickoffPlay ? off.isHome ? 1 : -1 : off.isHome ? -1 : 1;
@@ -1535,7 +1573,7 @@ function decomposePlay(p, off, g, priorSpot = null) {
     }
     const isTb = /touchback/i.test(text);
     const at = isTb || intoEz && caught == null ? ezLanding : caught != null ? clampUnit(caught) : derived != null ? derived : gm.x2;
-    segs.push({ d: arcPath(gm.x1, at, true), len: segLen(gm.x1, at, true), kind: "arc", color: ink });
+    segs.push({ d: arcPath(kx1, at, true), len: segLen(kx1, at, true), kind: "arc", color: ink });
     if (!FAIR_OR_TB.test(text) && Math.abs(gm.x2 - at) > 0.5) {
       segs.push({ d: laneLine(at, gm.x2, false), len: segLen(at, gm.x2, false), kind: "return", color: ink });
       badge = `${Math.round(Math.abs(gm.x2 - at))}-Yd Return`;

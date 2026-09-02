@@ -1377,11 +1377,53 @@ function priorTextSpot(summary: any, play: any, g: NormGame): number | null {
 }
 
 function decomposePlay(p: any, off: { team: NormTeam; isHome: boolean }, g: NormGame, priorSpot: number | null = null): PlayViz | null {
-  const gm = playGeom(p, off.isHome, g.home.id, g.away.id, g);
+  let gm = playGeom(p, off.isHome, g.home.id, g.away.id, g);
   if (!gm) return null;
   const ink = gm.penalty ? "var(--penalty-yellow)" : "var(--play-ink)";
+  // A mirrored frame maps u to 120−u. When the drive's last known spot is
+  // available, a start ~80 units from it is a mirror artifact, not football.
+  const preferNearPrior = (u: number): number => {
+    if (priorSpot == null) return u;
+    const alt = clampUnit(120 - u);
+    return Math.abs(alt - priorSpot) + 6 < Math.abs(u - priorSpot) ? alt : u;
+  };
+
   const text = String(p?.text || "");
   const tType = playTypeText(p);
+  // LAST CELL OF THE MATRIX: plays whose text names NO spot at all
+  // ("pass incomplete deep left") have no arithmetic check and no text end
+  // — the only coordinates still standing on frame math. A play starts
+  // where the previous one ended, so the drive anchor validates them too.
+  // Both x1 and x2 came from the same frame, so they flip together.
+  // Penalties excluded (their ytg math has been correct throughout).
+  {
+    const noTextSpots = !gm.penalty && textSpots(text, g).length === 0;
+    if (noTextSpots && !CHANGE_POSS.test(tType) && !FG_PLAY.test(tType)) {
+      const nx1 = preferNearPrior(gm.x1);
+      if (nx1 !== gm.x1) gm = { ...gm, x1: nx1, x2: clampUnit(120 - gm.x2) };
+    }
+  }
+
+  // TOUCHDOWNS name no spot ("for 11 yards, TOUCHDOWN") and ESPN records
+  // end.ytg = 0 — which maps to a goal line WHOSE SIDE the frame decides,
+  // so a flipped frame scored the TD in the wrong end zone (Joe, Rams TD
+  // pinned in the Rams' own zone). A TD's end is DEFINITIONAL: the goal
+  // line the gain reaches. start + gain lands on exactly one of them —
+  // arithmetic decides, frame consulted never. (Defensive/return TDs are
+  // CHANGE_POSS and keep their own text-anchored branches; nullified TDs
+  // are penalties and keep ytg math.)
+  if (/TOUCHDOWN/i.test(text) && p?.scoringPlay === true &&
+      !gm.penalty && !CHANGE_POSS.test(tType) && !FG_PLAY.test(tType)) {
+    const yd = Math.abs(Number(p?.statYardage) || 0);
+    const nearGoal = (u: number): number | null =>
+      Math.abs(u - 110) <= 2 ? 110 : Math.abs(u - 10) <= 2 ? 10 : null;
+    const gA = nearGoal(clampUnit(gm.x1 + yd));
+    const gB = nearGoal(clampUnit(gm.x1 - yd));
+    const goal = gA != null && gB == null ? gA
+      : gB != null && gA == null ? gB
+      : gm.x1 > 60 ? 110 : 10; // both/neither resolve (rare): the near half's goal
+    gm = { ...gm, x2: goal };
+  }
   const segs: Seg[] = [];
   let xMark: number | null = null;
   let badge: string | null = null;
@@ -1410,10 +1452,11 @@ function decomposePlay(p: any, off: { team: NormTeam; isHome: boolean }, g: Norm
   } else if (LOST_FUMBLE.test(tType)) {
     // Same grammar as an interception: carry the ball to the fumble spot,
     // loop to show the change of hands, then return the OTHER way.
-    const fumbleAt = spotFromMatch(text.match(FUMBLE_AT_RE), g) ?? gm.x1;
+    const fx1 = preferNearPrior(gm.x1);
+    const fumbleAt = spotFromMatch(text.match(FUMBLE_AT_RE), g) ?? fx1;
     const recovAt = spotFromMatch(text.match(RECOVERED_AT_RE), g) ?? gm.x2;
-    if (Math.abs(fumbleAt - gm.x1) > 0.5) {
-      segs.push({ d: laneLine(gm.x1, fumbleAt, false), len: segLen(gm.x1, fumbleAt, false), kind: "ground", color: ink });
+    if (Math.abs(fumbleAt - fx1) > 0.5) {
+      segs.push({ d: laneLine(fx1, fumbleAt, false), len: segLen(fx1, fumbleAt, false), kind: "ground", color: ink });
     }
     const dir = off.isHome ? 1 : -1; // the RECOVERING team's direction
     segs.push({ d: loopPath(recovAt, dir), len: 18, kind: "loop", color: ink, lane2: true });
@@ -1424,6 +1467,29 @@ function decomposePlay(p: any, off: { team: NormTeam; isHome: boolean }, g: Norm
   } else if (kickish) {
     const m = text.match(CATCH_RE);
     const caught = m ? spotToUnit(m[1]!, Number(m[2]), g) : null;
+    // FRAME-FREE LAUNCH POINT (punt from LAC 9 mirrored to the Rams' 9 and
+    // drew a booming 80-yarder for what was a 20-yard shank — Joe):
+    // 1. kickoffs name it outright: "from LA 35" → absolute spot;
+    // 2. punts state distance LOS→catch: |x1 − caught| must equal it, so
+    //    between x1 and its mirror (120−x1) exactly one is consistent;
+    // 3. otherwise (touchbacks), the drive's last spot decides the half.
+    let kx1 = gm.x1;
+    const fromM = text.match(/\bfrom\s+(?:the\s+)?([A-Z]{2,4})\s+(\d{1,2})/i);
+    const fromU = fromM ? spotToUnit(String(fromM[1]).toUpperCase(), Number(fromM[2]), g) : null;
+    if (fromU != null) {
+      kx1 = clampUnit(fromU);
+    } else {
+      const dm = text.match(/(?:punts?|kicks?)\s+(\d{1,3})\s+yards?/i);
+      const dist = dm ? Number(dm[1]) : null;
+      if (dist != null && caught != null) {
+        const alt = clampUnit(120 - gm.x1);
+        const eA = Math.abs(Math.abs(gm.x1 - clampUnit(caught)) - dist);
+        const eB = Math.abs(Math.abs(alt - clampUnit(caught)) - dist);
+        if (eB + 1 < eA) kx1 = alt;
+      } else {
+        kx1 = preferNearPrior(gm.x1);
+      }
+    }
     // Touchbacks: the ball ACTUALLY lands in the end zone; the next spot
     // (20/25/30/35) is a placement RULE, not a return — so the arc flies
     // into the zone and the pin simply appears at the placement (Joe).
@@ -1453,7 +1519,7 @@ function decomposePlay(p: any, off: { team: NormTeam; isHome: boolean }, g: Norm
     const at = isTb || (intoEz && caught == null) ? ezLanding
       : caught != null ? clampUnit(caught)
       : derived != null ? derived : gm.x2;
-    segs.push({ d: arcPath(gm.x1, at, true), len: segLen(gm.x1, at, true), kind: "arc", color: ink });
+    segs.push({ d: arcPath(kx1, at, true), len: segLen(kx1, at, true), kind: "arc", color: ink });
     // intoEz moves only the LANDING; whether a return draws is governed by
     // the text (touchback/fair catch suppress it). A kick fielded IN the
     // zone and run out gets its return drawn from the zone — correct.
